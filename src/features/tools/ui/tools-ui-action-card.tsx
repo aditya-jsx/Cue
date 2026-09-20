@@ -9,6 +9,7 @@ import { ToolsUiStatusAlert } from '@/features/tools/ui/tools-ui-status-alert'
 
 export type ToolsActionStatus = {
   description: string
+  explorerUrl?: string
   status: 'danger' | 'success'
   title: string
 }

@@ -7,6 +7,7 @@ import { View } from 'react-native'
 import { useTheme } from '@/features/shell/data-access/use-theme'
 import { WalletFeatureAccount } from '@/features/wallet/wallet-feature-account'
 import { WalletFeatureBalance } from '@/features/wallet/wallet-feature-balance'
+import { WalletFeatureSendSol } from '@/features/wallet/wallet-feature-send-sol'
 
 export function WalletFeatureConnected({
   account,
@@ -21,6 +22,7 @@ export function WalletFeatureConnected({
     <View className="gap-6">
       <WalletFeatureAccount account={account} disconnect={wallet.disconnect} />
       <WalletFeatureBalance account={account} />
+      <WalletFeatureSendSol account={account} getTransactionSigner={wallet.getTransactionSigner} />
       <Link asChild href="./activity">
         <Button variant="outline">
           <View className="flex-row items-center justify-center gap-2">
