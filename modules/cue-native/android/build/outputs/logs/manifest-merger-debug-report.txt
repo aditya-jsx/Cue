@@ -1,0 +1,42 @@
+-- Merging decision tree log ---
+manifest
+ADDED from /Users/aditya/Documents/Development/Web3/cue/modules/cue-native/android/src/main/AndroidManifest.xml:1:1-13:12
+INJECTED from /Users/aditya/Documents/Development/Web3/cue/modules/cue-native/android/src/main/AndroidManifest.xml:1:1-13:12
+	package
+		INJECTED from /Users/aditya/Documents/Development/Web3/cue/modules/cue-native/android/src/main/AndroidManifest.xml
+	xmlns:android
+		ADDED from /Users/aditya/Documents/Development/Web3/cue/modules/cue-native/android/src/main/AndroidManifest.xml:1:11-69
+uses-permission#android.permission.FOREGROUND_SERVICE
+ADDED from /Users/aditya/Documents/Development/Web3/cue/modules/cue-native/android/src/main/AndroidManifest.xml:2:3-75
+	android:name
+		ADDED from /Users/aditya/Documents/Development/Web3/cue/modules/cue-native/android/src/main/AndroidManifest.xml:2:20-72
+uses-permission#android.permission.FOREGROUND_SERVICE_DATA_SYNC
+ADDED from /Users/aditya/Documents/Development/Web3/cue/modules/cue-native/android/src/main/AndroidManifest.xml:3:3-85
+	android:name
+		ADDED from /Users/aditya/Documents/Development/Web3/cue/modules/cue-native/android/src/main/AndroidManifest.xml:3:20-82
+uses-permission#android.permission.POST_NOTIFICATIONS
+ADDED from /Users/aditya/Documents/Development/Web3/cue/modules/cue-native/android/src/main/AndroidManifest.xml:4:3-75
+	android:name
+		ADDED from /Users/aditya/Documents/Development/Web3/cue/modules/cue-native/android/src/main/AndroidManifest.xml:4:20-72
+uses-permission#android.permission.WAKE_LOCK
+ADDED from /Users/aditya/Documents/Development/Web3/cue/modules/cue-native/android/src/main/AndroidManifest.xml:5:3-66
+	android:name
+		ADDED from /Users/aditya/Documents/Development/Web3/cue/modules/cue-native/android/src/main/AndroidManifest.xml:5:20-63
+application
+ADDED from /Users/aditya/Documents/Development/Web3/cue/modules/cue-native/android/src/main/AndroidManifest.xml:7:3-12:17
+service#expo.modules.cuenative.CueHeartbeatService
+ADDED from /Users/aditya/Documents/Development/Web3/cue/modules/cue-native/android/src/main/AndroidManifest.xml:8:5-11:50
+	android:exported
+		ADDED from /Users/aditya/Documents/Development/Web3/cue/modules/cue-native/android/src/main/AndroidManifest.xml:10:7-31
+	android:foregroundServiceType
+		ADDED from /Users/aditya/Documents/Development/Web3/cue/modules/cue-native/android/src/main/AndroidManifest.xml:11:7-47
+	android:name
+		ADDED from /Users/aditya/Documents/Development/Web3/cue/modules/cue-native/android/src/main/AndroidManifest.xml:9:7-42
+uses-sdk
+INJECTED from /Users/aditya/Documents/Development/Web3/cue/modules/cue-native/android/src/main/AndroidManifest.xml reason: use-sdk injection requested
+INJECTED from /Users/aditya/Documents/Development/Web3/cue/modules/cue-native/android/src/main/AndroidManifest.xml
+INJECTED from /Users/aditya/Documents/Development/Web3/cue/modules/cue-native/android/src/main/AndroidManifest.xml
+	android:targetSdkVersion
+		INJECTED from /Users/aditya/Documents/Development/Web3/cue/modules/cue-native/android/src/main/AndroidManifest.xml
+	android:minSdkVersion
+		INJECTED from /Users/aditya/Documents/Development/Web3/cue/modules/cue-native/android/src/main/AndroidManifest.xml

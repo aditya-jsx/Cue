@@ -79,7 +79,9 @@ console.log('owner (USDC holder):', holder.owner)
 console.log('owner USDC ATA     :', holder.ata)
 console.log('delegate (session) :', delegate)
 
-const q = await fetch(`${JUP}/quote?inputMint=${USDC}&outputMint=${JUP_MINT}&amount=1000000&slippageBps=50`).then((r) => r.json())
+const q = await fetch(`${JUP}/quote?inputMint=${USDC}&outputMint=${JUP_MINT}&amount=1000000&slippageBps=50`).then((r) =>
+  r.json(),
+)
 const swap = await fetch(`${JUP}/swap-instructions`, {
   body: JSON.stringify({ payer: FEE_PAYER, quoteResponse: q, userPublicKey: holder.owner }),
   headers: { 'content-type': 'application/json' },
@@ -102,18 +104,30 @@ let msg = pipe(
   createTransactionMessage({ version: 0 }),
   (m) => setTransactionMessageFeePayer(FEE_PAYER, m),
   (m) => setTransactionMessageLifetimeUsingBlockhash(bh, m),
-  (m) => appendTransactionMessageInstructions(ixs.map((i) => toIx(i, holder.owner, delegate, i === swap.swapInstruction)), m),
+  (m) =>
+    appendTransactionMessageInstructions(
+      ixs.map((i) => toIx(i, holder.owner, delegate, i === swap.swapInstruction)),
+      m,
+    ),
 )
 const alts = await fetchAddressesForLookupTables(swap.addressLookupTableAddresses.map(address), client.rpc)
 msg = compressTransactionMessageUsingAddressLookupTables(msg, alts)
 
 const wire = getBase64EncodedWireTransaction(compileTransaction(msg))
 const { value: sim } = await client.rpc
-  .simulateTransaction(wire, { commitment: 'confirmed', encoding: 'base64', replaceRecentBlockhash: true, sigVerify: false })
+  .simulateTransaction(wire, {
+    commitment: 'confirmed',
+    encoding: 'base64',
+    replaceRecentBlockhash: true,
+    sigVerify: false,
+  })
   .send()
 
 const logs = sim.logs ?? []
-console.log('\nsimulation err:', JSON.stringify(sim.err, (_, v) => (typeof v === 'bigint' ? String(v) : v)))
+console.log(
+  '\nsimulation err:',
+  JSON.stringify(sim.err, (_, v) => (typeof v === 'bigint' ? String(v) : v)),
+)
 console.log(logs.slice(-12).join('\n'))
 
 const ownerMismatch = logs.some((l) => /owner does not match/i.test(l))

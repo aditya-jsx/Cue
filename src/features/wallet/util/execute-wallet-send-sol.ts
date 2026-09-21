@@ -105,25 +105,12 @@ export async function executeWalletSendSol({
     throw new Error('Transaction submitted but no signature was returned by the wallet adapter.')
   }
 
-  // Wait for the transaction to confirm on chain
-  try {
-    await confirmSignature({
-      lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
-      rpc: client.rpc,
-      signature,
-    })
-  } catch (confirmError) {
-    const message = confirmError instanceof Error ? confirmError.message : String(confirmError)
-    // If it's a verified on-chain failure, rethrow so the UI shows the real on-chain failure
-    if (message.includes('failed on chain')) {
-      throw confirmError
-    }
-    console.warn(
-      '[executeWalletSendSol] Confirmation poll timed out or had RPC issue, but transaction was submitted:',
-      signature,
-      confirmError,
-    )
-  }
+  // Never report success for a transaction that did not confirm: an unconfirmed send is an error.
+  await confirmSignature({
+    lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
+    rpc: client.rpc,
+    signature,
+  })
 
   return signature
 }

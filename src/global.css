@@ -3,3 +3,45 @@
 
 @import 'heroui-native/styles';
 @source '../node_modules/heroui-native/lib';
+
+/* Cue palette: black, metallic grey and white. Status colours (success, warning, danger) keep HeroUI defaults. */
+@layer theme {
+  :root {
+    @variant light {
+      --background: #f1f2f3;
+      --foreground: #0a0b0c;
+      --surface: #ffffff;
+      --surface-secondary: #eceef0;
+      --surface-tertiary: #e4e6e9;
+      --overlay: #ffffff;
+      --muted: #6b6e73;
+      --default: #e4e6e9;
+      --default-foreground: #0a0b0c;
+      --accent: #0a0b0c;
+      --accent-foreground: #ffffff;
+      --field-background: #ffffff;
+      --border: #dcdee1;
+      --separator: #dcdee1;
+      --focus: #0a0b0c;
+      --segment: #ffffff;
+    }
+    @variant dark {
+      --background: #050505;
+      --foreground: #f5f5f6;
+      --surface: #131416;
+      --surface-secondary: #1a1b1e;
+      --surface-tertiary: #222326;
+      --overlay: #161719;
+      --muted: #8b8e94;
+      --default: #222326;
+      --default-foreground: #f5f5f6;
+      --accent: #f5f5f6;
+      --accent-foreground: #0a0b0c;
+      --field-background: #131416;
+      --border: #2a2c30;
+      --separator: #2a2c30;
+      --focus: #f5f5f6;
+      --segment: #222326;
+    }
+  }
+}

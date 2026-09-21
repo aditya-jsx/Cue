@@ -7,6 +7,7 @@ import {
 } from '@wallet-ui/react-native-kit'
 import type { SolanaClusterId } from '@wallet-ui/react-native-kit'
 
+import { isRpcUrl } from '@/features/cluster/data-access/is-rpc-url'
 import type { SyncCache } from '@/features/cluster/data-access/sync-cache'
 
 export interface AppCluster {
@@ -134,10 +135,11 @@ function getStoredClusterState(value: unknown): StoredClusterState {
 function normalizeState(value: unknown) {
   const stored = getStoredClusterState(value)
   const clusters = DEFAULT_CLUSTERS.map((cluster) => {
-    const storedCluster = stored.clusters?.find((item) => item.id === cluster.id)
+    const storedUrl = stored.clusters?.find((item) => item.id === cluster.id)?.url?.trim()
     return createAppCluster({
       ...cluster,
-      url: storedCluster?.url ?? cluster.url,
+      // A saved value that is not a real URL (an older bad entry) would crash startup, so fall back to the default.
+      url: storedUrl !== undefined && isRpcUrl(storedUrl) ? storedUrl : cluster.url,
     })
   })
   const fallbackCluster = findFallbackCluster(clusters, stored.clusterId)
@@ -193,6 +195,9 @@ export function createClusterStore(context: ClusterStoreContext) {
   }
 
   function updateClusterUrl(clusterId: SolanaClusterId, url: string) {
+    if (!isRpcUrl(url.trim())) {
+      throw new Error('Enter the full RPC URL, starting with https:// (not just the API key).')
+    }
     const state = getState()
     const clusters = state.clusters.map((cluster) =>
       cluster.id === clusterId ? createAppCluster({ ...cluster, url }) : cluster,

@@ -13,20 +13,7 @@ export default function SettingsLayout() {
         ...navigationHeaderOptions,
       }}
     >
-      <Stack.Screen
-        name="index"
-        options={{
-          headerTitle: () => (
-            <ShellUiHeaderTitle
-              foregroundColor={foregroundColor}
-              icon="settings-outline"
-              tintColor={tintColor}
-              title="Settings"
-            />
-          ),
-          title: 'Settings',
-        }}
-      />
+      <Stack.Screen name="index" options={{ headerShown: false }} />
       <Stack.Screen
         name="cluster"
         options={{

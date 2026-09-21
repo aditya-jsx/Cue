@@ -13,5 +13,10 @@ export function formatError(error: unknown): string {
     return 'DNS / Network Error (UnknownHostException): The device or emulator cannot reach the Solana RPC server. Please toggle Airplane Mode in your emulator to reset DNS, or check your internet connection.'
   }
 
+  // The wallet session is cancelled when the user leaves the wallet app before answering.
+  if (message.includes('CancellationException')) {
+    return 'The wallet request was cancelled. Tap Confirm and sign to try again.'
+  }
+
   return message
 }

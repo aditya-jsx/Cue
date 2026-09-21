@@ -10,7 +10,9 @@ import { ClusterProvider, useAppCluster } from '@/features/cluster/data-access/c
 import { createClusterProps } from '@/features/cluster/data-access/create-cluster-props'
 import { ShellUiThemeStatusBar } from '@/features/shell/ui/shell-ui-theme-status-bar'
 
-const identity: AppIdentity = { name: 'Cue', uri: 'cue://cue' }
+// Wallets verify this origin's /.well-known/assetlinks.json against our package + signing key (MWA identity).
+// Source of that file: the cue-links Vercel project. Add the release keystore fingerprint there before publishing.
+export const identity: AppIdentity = { name: 'Cue', uri: 'https://cue-app-one.vercel.app' }
 const queryClient = new QueryClient()
 const clusterConfig = createClusterProps()
 

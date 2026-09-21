@@ -5,9 +5,10 @@ import { Uniwind, useUniwind } from 'uniwind'
 export type Theme = 'dark' | 'light' | 'system'
 export type ThemeOption = { label: string; name: Theme }
 
-const ACTIVE_TINT = '#208AEF'
-const BG_DARK = '#000000'
-const BG_LIGHT = '#FFFFFF'
+const TINT_DARK = '#F5F5F6'
+const TINT_LIGHT = '#0A0B0C'
+const BG_DARK = '#050505'
+const BG_LIGHT = '#F1F2F3'
 const FG_DARK = '#FAFAFA'
 const FG_LIGHT = '#111827'
 const MUTED_DARK = '#A3A3A3'
@@ -60,8 +61,8 @@ export function useTheme(): UseThemeResult {
     activeTheme: hasAdaptiveThemes ? 'system' : theme,
     backgroundColor,
     foregroundColor,
-    iconColor: { default: mutedColor, selected: ACTIVE_TINT },
-    indicatorColor: isLight ? '#E6F4FE' : '#102A43',
+    iconColor: { default: mutedColor, selected: isLight ? TINT_LIGHT : TINT_DARK },
+    indicatorColor: isLight ? '#E5E6E8' : '#1A1B1D',
     isDark,
     isLight,
     mutedColor,
@@ -69,11 +70,11 @@ export function useTheme(): UseThemeResult {
       headerShadowVisible: false,
       headerStyle: { backgroundColor },
       headerTitleAlign: 'left',
-      headerTintColor: ACTIVE_TINT,
+      headerTintColor: isLight ? TINT_LIGHT : TINT_DARK,
       headerTitleStyle: { color: foregroundColor },
     },
     theme,
     themes,
-    tintColor: ACTIVE_TINT,
+    tintColor: isLight ? TINT_LIGHT : TINT_DARK,
   }
 }

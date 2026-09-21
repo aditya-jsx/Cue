@@ -79,6 +79,7 @@ export async function confirmSignature({
     }
   }
 
-  // Return signature so the UI displays the transaction link rather than a false failure
-  return signature
+  throw new Error(
+    "Couldn't confirm the transaction on-chain. It may have expired, so check your balance before trying again.",
+  )
 }

@@ -1,11 +1,21 @@
 import '../global.css'
 
-import Ionicons from '@expo/vector-icons/Ionicons'
 import { Tabs } from 'expo-router/js-tabs'
+import { useMobileWallet } from '@wallet-ui/react-native-kit'
+import { useEffect } from 'react'
+import { View } from 'react-native'
+import { CueConnect } from '@/features/cue/cue-connect'
+import { CueFlow } from '@/features/cue/cue-flow'
+import { CueTabBar } from '@/features/cue/cue-tab-bar'
 import { AppProviders } from '@/features/core/data-access/app-providers'
 import { useTheme } from '@/features/shell/data-access/use-theme'
+import { startSpike } from '../spike/start' // SPIKE: remove after background-JS test
 
 export default function Layout() {
+  useEffect(() => {
+    startSpike().catch((e) => console.warn('[CueSpike] start failed', e))
+  }, [])
+
   return (
     <AppProviders>
       <AppTabs />
@@ -14,49 +24,25 @@ export default function Layout() {
 }
 
 function AppTabs() {
-  const { backgroundColor, isDark, mutedColor, tintColor } = useTheme()
+  const { account } = useMobileWallet()
+  const { backgroundColor } = useTheme()
+
+  if (!account) {
+    return <CueConnect />
+  }
 
   return (
-    <Tabs
-      screenOptions={{
-        headerShown: false,
-        sceneStyle: { backgroundColor },
-        tabBarActiveTintColor: tintColor,
-        tabBarHideOnKeyboard: true,
-        tabBarInactiveTintColor: mutedColor,
-        tabBarStyle: {
-          backgroundColor,
-          borderTopColor: isDark ? '#1F2937' : '#E5E7EB',
-        },
-      }}
-    >
-      <Tabs.Screen
-        name="(wallet)"
-        options={{
-          tabBarIcon: ({ color, focused, size }) => (
-            <Ionicons color={color} name={focused ? 'wallet' : 'wallet-outline'} size={size} />
-          ),
-          title: 'Wallet',
-        }}
-      />
-      <Tabs.Screen
-        name="tools"
-        options={{
-          tabBarIcon: ({ color, focused, size }) => (
-            <Ionicons color={color} name={focused ? 'construct' : 'construct-outline'} size={size} />
-          ),
-          title: 'Tools',
-        }}
-      />
-      <Tabs.Screen
-        name="settings"
-        options={{
-          tabBarIcon: ({ color, focused, size }) => (
-            <Ionicons color={color} name={focused ? 'settings' : 'settings-outline'} size={size} />
-          ),
-          title: 'Settings',
-        }}
-      />
-    </Tabs>
+    <View style={{ flex: 1 }}>
+      <Tabs
+        screenOptions={{ headerShown: false, sceneStyle: { backgroundColor }, tabBarHideOnKeyboard: true }}
+        tabBar={(props) => <CueTabBar {...props} />}
+      >
+        <Tabs.Screen name="index" options={{ title: 'Home' }} />
+        <Tabs.Screen name="activity" options={{ title: 'Activity' }} />
+        <Tabs.Screen name="settings" options={{ title: 'Settings' }} />
+        <Tabs.Screen name="tools" options={{ href: null }} />
+      </Tabs>
+      <CueFlow />
+    </View>
   )
 }

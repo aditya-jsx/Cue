@@ -1,5 +1,5 @@
-import { SettingsFeatureEntry } from '@/features/settings/settings-feature-entry'
+import { CueSettings } from '@/features/cue/cue-settings'
 
 export default function Settings() {
-  return <SettingsFeatureEntry />
+  return <CueSettings />
 }
