@@ -41,3 +41,7 @@ app-example
 # generated native folders
 /ios
 /android
+
+# local test keys (scripts/ itself is tracked)
+scripts/.test-owner-key.json
+

@@ -7,7 +7,7 @@
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
-      "package": "com.anonymous.cue",
+      "package": "com.cue.app",
       "predictiveBackGestureEnabled": false
     },
     "experiments": {
