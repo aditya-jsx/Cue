@@ -23,13 +23,13 @@ import Animated, {
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import Svg, { Path } from 'react-native-svg'
 import { getExplorerUrl, useMobileWallet } from '@wallet-ui/react-native-kit'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import * as Linking from 'expo-linking'
 
 import { useAppCluster } from '@/features/cluster/data-access/cluster-provider'
 import { identity } from '@/features/core/data-access/app-providers'
-import { createFreshAuthorizeSigner } from '@/features/wallet/util/create-fresh-authorize-signer'
 import { $flow, flow, type Screen, shortAddr } from '@/features/cue/data-access/cue-store'
-import { useWalletSendSol } from '@/features/wallet/data-access/use-wallet-send-sol'
+import { executeInstantSend } from '@/features/wallet/util/execute-instant-send'
 import { formatError } from '@/features/wallet/util/format-error'
 import { IOS_EASING, useCue } from '@/features/cue/cue-theme'
 import { Backdrop, CueButton, Glass, KV, Press, Ring, Rows, Segment, Txt, useBusy } from '@/features/cue/ui/cue-ui'
@@ -238,11 +238,16 @@ function Confirm() {
   const [busy, run] = useBusy(1100)
   const { account } = useMobileWallet()
   const { client, cluster } = useAppCluster()
-  const sendSol = useWalletSendSol({
-    account: account!,
-    client,
-    getTransactionSigner: (address, minContextSlot) =>
-      createFreshAuthorizeSigner({ address, chain: cluster.id, identity, minContextSlot, rpc: client.rpc }),
+  const queryClient = useQueryClient()
+  const sendSol = useMutation({
+    mutationFn: (opts: { amountLamports: bigint; destination: string }) =>
+      executeInstantSend({ account: account!, chain: cluster.id, client, identity, ...opts }),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['get-balance'] }),
+        queryClient.invalidateQueries({ queryKey: ['get-transaction-signatures'] }),
+      ])
+    },
   })
   const [error, setError] = useState<string | null>(null)
   const send = parsed.intent === 'instant_send' && recipient ? { ...parsed, to: recipient } : null
@@ -257,7 +262,9 @@ function Confirm() {
       })
       flow.signed(signature)
     } catch (e) {
-      setError(formatError(e))
+      // A confirm-timeout still carries the real signature (it was submitted); show it so the user can verify.
+      const sig = (e as { signature?: string })?.signature
+      setError(sig ? `${formatError(e)}\n\nSignature: ${sig}` : formatError(e))
     }
   }
 

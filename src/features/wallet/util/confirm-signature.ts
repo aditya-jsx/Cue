@@ -1,7 +1,8 @@
 import { assertIsSignature, type GetBlockHeightApi, type GetSignatureStatusesApi, type Rpc } from '@solana/kit'
 
 export interface ConfirmSignatureOptions {
-  lastValidBlockHeight: bigint
+  // Omit for a durable-nonce transaction: it has no time-based expiry, so there's nothing to check against.
+  lastValidBlockHeight?: bigint
   maxAttempts?: number
   pollIntervalMs?: number
   rpc: Rpc<GetBlockHeightApi & GetSignatureStatusesApi>
@@ -45,7 +46,7 @@ export async function confirmSignature({
     }
 
     // Check block height only occasionally to prevent RPC rate limiting
-    if (attempts % 4 === 0 && !expired) {
+    if (lastValidBlockHeight !== undefined && attempts % 4 === 0 && !expired) {
       try {
         const currentBlockHeight = await rpc.getBlockHeight({ commitment: 'confirmed' }).send()
         if (currentBlockHeight > lastValidBlockHeight) {
@@ -80,6 +81,8 @@ export async function confirmSignature({
   }
 
   throw new Error(
-    "Couldn't confirm the transaction on-chain. It may have expired, so check your balance before trying again.",
+    lastValidBlockHeight === undefined
+      ? "Couldn't confirm the transaction on-chain yet. Check your balance before trying again."
+      : "Couldn't confirm the transaction on-chain. It may have expired, so check your balance before trying again.",
   )
 }

@@ -41,6 +41,8 @@ app-example
 # generated native folders
 /ios
 /android
+.gradle/
+**/build/
 
 # local test keys (scripts/ itself is tracked)
 scripts/.test-owner-key.json
