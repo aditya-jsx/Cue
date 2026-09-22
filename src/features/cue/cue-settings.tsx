@@ -12,13 +12,79 @@ import Animated, {
 } from 'react-native-reanimated'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
+import { useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
+
+import { useAppCluster } from '@/features/cluster/data-access/cluster-provider'
+import { identity } from '@/features/core/data-access/app-providers'
 import { $cue, actions, shortAddr } from '@/features/cue/data-access/cue-store'
 import { SPRING, useCue } from '@/features/cue/cue-theme'
 import { CuePage, Press, Row, Rows, SectionLabel, Segment, Txt } from '@/features/cue/ui/cue-ui'
 import { setTheme, type Theme, useTheme } from '@/features/shell/data-access/use-theme'
+import { executeDelegationRevoke } from '@/features/wallet/util/execute-delegation'
+import { formatError } from '@/features/wallet/util/format-error'
 
 const THEMES: readonly Theme[] = ['dark', 'light', 'system']
 const enter = (i: number) => FadeInDown.delay(i * 55).duration(550)
+
+function RevokeButton({ ruleId, title }: { ruleId: string; title: string }) {
+  const c = useCue()
+  const { account } = useMobileWallet()
+  const { client, cluster } = useAppCluster()
+  const queryClient = useQueryClient()
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function handleRevoke() {
+    if (!account) return
+    setLoading(true)
+    setError(null)
+    try {
+      await executeDelegationRevoke({
+        account,
+        chain: cluster.id,
+        client,
+        identity,
+      })
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['get-balance'] }),
+        queryClient.invalidateQueries({ queryKey: ['get-transaction-signatures'] }),
+      ])
+      actions.revoke(ruleId)
+    } catch (err) {
+      console.error('[CueRevoke] Revocation error:', err)
+      setError(formatError(err))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <View style={{ alignItems: 'flex-end', gap: 4 }}>
+      <Press label={`Revoke ${title}`} onPress={handleRevoke}>
+        <View
+          style={{
+            alignItems: 'center',
+            borderColor: c.line,
+            borderRadius: 999,
+            borderWidth: 1,
+            height: 36,
+            justifyContent: 'center',
+            opacity: loading ? 0.6 : 1,
+            paddingHorizontal: 16,
+          }}
+        >
+          <Txt style={{ fontSize: 14, fontWeight: '600' }}>{loading ? 'Revoking...' : 'Revoke'}</Txt>
+        </View>
+      </Press>
+      {error ? (
+        <Txt style={{ maxWidth: 140, textAlign: 'right' }} v="k">
+          {error}
+        </Txt>
+      ) : null}
+    </View>
+  )
+}
 
 function Toggle({ label, on, onPress }: { label: string; on: boolean; onPress: () => void }) {
   const c = useCue()
@@ -62,7 +128,6 @@ function LinkRow({ href, label }: { href: '/settings/cluster' | '/tools'; label:
 }
 
 export function CueSettings() {
-  const c = useCue()
   const insets = useSafeAreaInsets()
   const { activeTheme } = useTheme()
   const { contacts, rules, wake } = useStore($cue)
@@ -90,23 +155,7 @@ export function CueSettings() {
                   <Row
                     detail="Ends Oct 4"
                     last={i === delegated.length - 1}
-                    right={
-                      <Press label={`Revoke ${r.title}`} onPress={() => actions.revoke(r.id)}>
-                        <View
-                          style={{
-                            alignItems: 'center',
-                            borderColor: c.line,
-                            borderRadius: 999,
-                            borderWidth: 1,
-                            height: 36,
-                            justifyContent: 'center',
-                            paddingHorizontal: 16,
-                          }}
-                        >
-                          <Txt style={{ fontSize: 14, fontWeight: '600' }}>Revoke</Txt>
-                        </View>
-                      </Press>
-                    }
+                    right={<RevokeButton ruleId={r.id} title={r.title} />}
                     title={r.title}
                   />
                 </Animated.View>

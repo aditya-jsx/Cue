@@ -29,6 +29,7 @@ import * as Linking from 'expo-linking'
 import { useAppCluster } from '@/features/cluster/data-access/cluster-provider'
 import { identity } from '@/features/core/data-access/app-providers'
 import { $flow, flow, type Screen, shortAddr } from '@/features/cue/data-access/cue-store'
+import { executeDelegationGrant } from '@/features/wallet/util/execute-delegation'
 import { executeInstantSend } from '@/features/wallet/util/execute-instant-send'
 import { formatError } from '@/features/wallet/util/format-error'
 import { IOS_EASING, useCue } from '@/features/cue/cue-theme'
@@ -392,7 +393,46 @@ function NotSupported() {
 function Delegate() {
   const c = useCue()
   const insets = useSafeAreaInsets()
-  const [busy, run] = useBusy(1100)
+  const { account } = useMobileWallet()
+  const { client, cluster } = useAppCluster()
+  const queryClient = useQueryClient()
+  const [error, setError] = useState<string | null>(null)
+
+  const grantDelegation = useMutation({
+    mutationFn: () =>
+      executeDelegationGrant({
+        account: account!,
+        chain: cluster.id,
+        client,
+        identity,
+      }),
+    onSuccess: async (result) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['get-balance'] }),
+        queryClient.invalidateQueries({ queryKey: ['get-transaction-signatures'] }),
+      ])
+      flow.signed(result.signature, {
+        delegateAddress: result.delegateAddress,
+        tokenAccount: result.ownerAta,
+      })
+    },
+  })
+
+  async function approve() {
+    if (!account) {
+      setError('Please connect your wallet first.')
+      return
+    }
+    if (grantDelegation.isPending) return
+    setError(null)
+    try {
+      await grantDelegation.mutateAsync()
+    } catch (e) {
+      const sig = (e as { signature?: string })?.signature
+      setError(sig ? `${formatError(e)}\n\nSignature: ${sig}` : formatError(e))
+    }
+  }
+
   return (
     <Animated.View
       entering={SlideInRight.duration(480).easing(ease)}
@@ -418,22 +458,24 @@ function Delegate() {
         </Animated.View>
         <Animated.View entering={stagger(3)}>
           <Rows>
-            <KV label="Hard limit, on-chain" value={num('$20.00 USDC')} />
+            <KV label="Hard limit, on-chain" value={num('0.05 WSOL')} />
             <KV label="Cue will use it for" value={val('Buying JUP')} />
-            <KV label="Cue stops using it" value={val('Oct 4, 11:59 PM')} />
+            <KV label="Session gas funded" value={num('0.01 SOL')} />
             <KV label="Stays valid until" last value={val('You revoke it')} />
           </Rows>
           <Txt style={{ marginHorizontal: 8, marginTop: 16 }} v="k">
-            Solana itself enforces the $20 limit. Cue limits itself to buying JUP. Revoke any time from Settings.
+            Solana itself enforces the 0.05 WSOL limit. Cue funds a secure session key with 0.01 SOL for gas. Revoke any
+            time from Settings.
           </Txt>
         </Animated.View>
         <View style={{ flex: 1 }} />
         <Animated.View entering={stagger(5)} style={{ gap: 12, paddingBottom: insets.bottom + 24 }}>
+          {error ? <Txt v="k">{error}</Txt> : null}
           <CueButton
             label="Approve in your wallet"
-            loading={busy}
+            loading={grantDelegation.isPending}
             loadingLabel="Waiting for your wallet"
-            onPress={() => run(flow.signed)}
+            onPress={approve}
           />
           <CueButton label="Not now" onPress={flow.cancel} variant="glass" />
         </Animated.View>

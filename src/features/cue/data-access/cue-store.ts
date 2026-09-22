@@ -6,7 +6,15 @@ import { type Intent, parseIntent } from '@/features/cue/data-access/parse-inten
 export type IntentKey = 'buy' | 'guard' | 'nope' | 'send'
 export type Screen = 'confirm' | 'delegate' | 'listen' | 'nope' | 'success'
 
-export type Rule = { delegated: boolean; detail: string; id: string; title: string }
+export type Rule = {
+  delegated: boolean
+  delegateAddress?: string
+  detail: string
+  id: string
+  signature?: string
+  title: string
+  tokenAccount?: string
+}
 export type LogEntry = {
   amount: string
   detail: string
@@ -68,6 +76,7 @@ export const $cue = atom<{
 })
 
 export const $flow = atom<{
+  delegateAddress: string | null
   guardMode: 0 | 1
   intent: IntentKey
   parsed: Intent
@@ -75,7 +84,9 @@ export const $flow = atom<{
   signature: string | null // set once a real transaction landed
   stack: Screen[]
   text: string // what the user said
+  tokenAccount: string | null
 }>({
+  delegateAddress: null,
   guardMode: 0,
   intent: 'send',
   parsed: { intent: 'unsupported', reason: '' },
@@ -83,6 +94,7 @@ export const $flow = atom<{
   signature: null,
   stack: [],
   text: '',
+  tokenAccount: null,
 })
 
 let uid = 0
@@ -100,7 +112,7 @@ export const flow = {
   back: () => $flow.set({ ...$flow.get(), stack: $flow.get().stack.slice(0, -1) }),
   cancel: () => $flow.set({ ...$flow.get(), stack: [] }),
   done() {
-    const { guardMode, intent, parsed, recipient, signature } = $flow.get()
+    const { delegateAddress, guardMode, intent, parsed, recipient, signature, tokenAccount } = $flow.get()
     const cue = $cue.get()
     if (intent === 'send' && parsed.intent === 'instant_send') {
       $cue.set({
@@ -123,7 +135,15 @@ export const flow = {
         ...cue,
         rules: [
           ...cue.rules,
-          { delegated: true, detail: 'Expires tomorrow, 9:00 AM', id: nextId(), title: 'Buy $20 of JUP below $0.85' },
+          {
+            delegated: true,
+            delegateAddress: delegateAddress ?? undefined,
+            detail: 'Expires Oct 4, 11:59 PM',
+            id: nextId(),
+            signature: signature ?? undefined,
+            title: 'Buy $20 of JUP below $0.85',
+            tokenAccount: tokenAccount ?? undefined,
+          },
         ],
       })
     }
@@ -168,11 +188,18 @@ export const flow = {
   },
   review: () => push('delegate'),
   setGuardMode: (m: 0 | 1) => $flow.set({ ...$flow.get(), guardMode: m }),
-  signed: (signature?: string) =>
-    $flow.set({ ...$flow.get(), signature: signature ?? null, stack: [...$flow.get().stack, 'success'] }),
+  signed: (signature?: string, meta?: { delegateAddress?: string; tokenAccount?: string }) =>
+    $flow.set({
+      ...$flow.get(),
+      delegateAddress: meta?.delegateAddress ?? $flow.get().delegateAddress,
+      signature: signature ?? null,
+      stack: [...$flow.get().stack, 'success'],
+      tokenAccount: meta?.tokenAccount ?? $flow.get().tokenAccount,
+    }),
   startListening(key: IntentKey) {
     const parsed = parseIntent(PHRASES[key])
     $flow.set({
+      delegateAddress: null,
       guardMode: parsed.intent === 'portfolio_guard' && parsed.action === 'pause_activity' ? 1 : 0,
       intent: KEY_OF[parsed.intent],
       parsed,
@@ -180,6 +207,7 @@ export const flow = {
       signature: null,
       stack: ['listen'],
       text: PHRASES[key],
+      tokenAccount: null,
     })
   },
 }
