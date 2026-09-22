@@ -6,7 +6,7 @@ set -euo pipefail
 # 1. 2048-bit RSA key, validity 10000 days.
 # 2. Keystore stored outside git repo by default (~/.android/cue-release.keystore).
 
-DEFAULT_KEYSTORE_PATH="$HOME/.android/cue-release.keystore"
+DEFAULT_KEYSTORE_PATH="$HOME/.keystores/cue-release.keystore"
 KEYSTORE_PATH="${1:-$DEFAULT_KEYSTORE_PATH}"
 ALIAS="cue-release-key"
 
