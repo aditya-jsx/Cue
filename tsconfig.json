@@ -5,7 +5,8 @@
       "@/*": ["./src/*"],
       "@/assets/*": ["./assets/*"]
     },
-    "strict": true
+    "strict": true,
+    "allowImportingTsExtensions": true
   },
   "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"]
 }

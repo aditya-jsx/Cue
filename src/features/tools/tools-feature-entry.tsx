@@ -26,6 +26,22 @@ const toolItems = [
     summary: 'Wallet examples for signing in, signing messages, and sending transactions.',
     title: 'Wallet actions',
   },
+  {
+    description: 'Spend from the approved delegation using the session key alone — no wallet, no user present.',
+    href: '/tools/autonomous-action',
+    icon: 'flash-outline',
+    id: 'autonomous-action',
+    summary: 'Proves the session key can act without the user, within the approved cap.',
+    title: 'Autonomous action',
+  },
+  {
+    description: 'Set a price trigger; the price engine fires the autonomous action automatically when it hits.',
+    href: '/tools/conditional-buy',
+    icon: 'trending-up-outline',
+    id: 'conditional-buy',
+    summary: 'Trigger registration → price engine evaluates → autonomous execution fires.',
+    title: 'Conditional Buy',
+  },
 ] as const satisfies readonly ToolItem[]
 
 export function ToolsFeatureEntry() {

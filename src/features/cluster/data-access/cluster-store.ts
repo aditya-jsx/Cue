@@ -154,6 +154,13 @@ function serializeState(state: ClusterStoreState): StoredClusterState {
   }
 }
 
+// Resolves the persisted active cluster (id + RPC URL) from raw cache storage, for code that runs
+// outside the React tree (e.g. the headless price-engine task) and can't use useAppCluster().
+export function resolveActiveSolanaCluster(cache: SyncCache<unknown>) {
+  const state = normalizeState(cache.get())
+  return getEnabledSolanaCluster(state.clusters, state.clusterId)
+}
+
 export function createClusterStore(context: ClusterStoreContext) {
   const { cache } = context
   const initialState = normalizeState(cache.get())

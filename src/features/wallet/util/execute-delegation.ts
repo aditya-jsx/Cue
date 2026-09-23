@@ -326,7 +326,7 @@ export async function executeDelegationRevoke({
   }
 
   // Clear session key from local storage upon successful revoke
-  clearSessionKey()
+  await clearSessionKey()
 
   return signature
 }

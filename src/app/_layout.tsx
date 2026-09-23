@@ -9,11 +9,11 @@ import { CueFlow } from '@/features/cue/cue-flow'
 import { CueTabBar } from '@/features/cue/cue-tab-bar'
 import { AppProviders } from '@/features/core/data-access/app-providers'
 import { useTheme } from '@/features/shell/data-access/use-theme'
-import { startSpike } from '../spike/start' // SPIKE: remove after background-JS test
+import { startPriceEngine } from '@/features/prices/util/start-price-engine'
 
 export default function Layout() {
   useEffect(() => {
-    startSpike().catch((e) => console.warn('[CueSpike] start failed', e))
+    startPriceEngine().catch((e) => console.warn('[CuePriceEngine] start failed', e))
   }, [])
 
   return (

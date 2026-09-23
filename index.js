@@ -1,4 +1,4 @@
 // index.js
 import './polyfill'
-import './src/spike/heartbeat-task' // SPIKE: remove after background-JS test
+import './src/features/prices/data-access/price-engine-task'
 import 'expo-router/entry'

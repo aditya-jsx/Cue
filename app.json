@@ -39,7 +39,8 @@
           "backgroundColor": "#050505"
         }
       ],
-      "expo-status-bar"
+      "expo-status-bar",
+      "expo-secure-store"
     ],
     "scheme": "cue",
     "slug": "cue",

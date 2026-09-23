@@ -27,8 +27,6 @@ export default function ToolsLayout() {
           title: 'Tools',
         }}
       />
-      <Stack.Screen name="network" options={{ title: 'Network tools' }} />
-      <Stack.Screen name="transaction" options={{ title: 'Transaction tools' }} />
       <Stack.Screen
         name="wallet-actions"
         options={{
@@ -41,6 +39,34 @@ export default function ToolsLayout() {
             />
           ),
           title: 'Wallet actions',
+        }}
+      />
+      <Stack.Screen
+        name="autonomous-action"
+        options={{
+          headerTitle: () => (
+            <ShellUiHeaderTitle
+              foregroundColor={foregroundColor}
+              icon="flash-outline"
+              tintColor={tintColor}
+              title="Autonomous action"
+            />
+          ),
+          title: 'Autonomous action',
+        }}
+      />
+      <Stack.Screen
+        name="conditional-buy"
+        options={{
+          headerTitle: () => (
+            <ShellUiHeaderTitle
+              foregroundColor={foregroundColor}
+              icon="trending-up-outline"
+              tintColor={tintColor}
+              title="Conditional Buy"
+            />
+          ),
+          title: 'Conditional Buy',
         }}
       />
     </Stack>
