@@ -42,6 +42,14 @@ const toolItems = [
     summary: 'Trigger registration → price engine evaluates → autonomous execution fires.',
     title: 'Conditional Buy',
   },
+  {
+    description: 'Set a stop price; the price engine exits automatically to protect your position when it hits.',
+    href: '/tools/portfolio-guard',
+    icon: 'shield-checkmark-outline',
+    id: 'portfolio-guard',
+    summary: 'Trigger registration → price engine evaluates → autonomous execution fires.',
+    title: 'Portfolio Guard',
+  },
 ] as const satisfies readonly ToolItem[]
 
 export function ToolsFeatureEntry() {

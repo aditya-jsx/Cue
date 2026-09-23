@@ -1,10 +1,10 @@
 import { address } from '@solana/kit'
 
 import type { SolanaClient } from '@/features/cluster/data-access/create-solana-client'
-import { $triggers, markTriggerFailed, markTriggerFired } from '@/features/conditional-buy/data-access/trigger-store'
+import { $triggers, markTriggerFailed, markTriggerFired } from '@/features/price-triggers/data-access/trigger-store'
 import { $prices } from '@/features/prices/data-access/price-store'
 import { executeAutonomousAction } from '@/features/wallet/util/execute-autonomous-action'
-import { shouldFireTrigger } from '@/features/conditional-buy/util/should-fire-trigger'
+import { shouldFireTrigger } from '@/features/price-triggers/util/should-fire-trigger'
 
 /** Checks every active trigger against the latest prices and fires the autonomous action for any that are met. */
 export async function evaluateTriggers(client: SolanaClient): Promise<void> {

@@ -69,6 +69,20 @@ export default function ToolsLayout() {
           title: 'Conditional Buy',
         }}
       />
+      <Stack.Screen
+        name="portfolio-guard"
+        options={{
+          headerTitle: () => (
+            <ShellUiHeaderTitle
+              foregroundColor={foregroundColor}
+              icon="shield-checkmark-outline"
+              tintColor={tintColor}
+              title="Portfolio Guard"
+            />
+          ),
+          title: 'Portfolio Guard',
+        }}
+      />
     </Stack>
   )
 }

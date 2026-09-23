@@ -1,7 +1,7 @@
 // Run: node scripts/check-evaluate-triggers.mjs
 import assert from 'node:assert/strict'
 
-import { shouldFireTrigger } from '../src/features/conditional-buy/util/should-fire-trigger.ts'
+import { shouldFireTrigger } from '../src/features/price-triggers/util/should-fire-trigger.ts'
 
 // "below" fires when price has dropped to or under the target; "above" fires when it's risen to or over it.
 assert.equal(shouldFireTrigger('below', 99, 100), true)

@@ -5,18 +5,23 @@ import { APP_STORAGE_ID } from '@/features/cluster/data-access/create-cluster-pr
 import type { Symbol } from '@/features/prices/data-access/price-store'
 
 const storage = createMMKV({ id: APP_STORAGE_ID })
+// Kept as the original key so triggers created before Portfolio Guard existed aren't dropped.
 const KEY = 'cue:conditional-buy-triggers'
 
 export type TriggerDirection = 'above' | 'below'
 export type TriggerStatus = 'active' | 'cancelled' | 'failed' | 'fired'
+// 'buy' = Conditional Buy (enter a position when price hits a target). 'guard' = Portfolio Guard (exit to protect
+// value when price moves against it). Same underlying mechanism — only the UI framing and default direction differ.
+export type TriggerKind = 'buy' | 'guard'
 
-export interface ConditionalBuyTrigger {
+export interface PriceTrigger {
   amountLamports: string // bigint as string for JSON safety
   createdAt: number
   direction: TriggerDirection
   error?: string
   firedAt?: number
   id: string
+  kind: TriggerKind
   ownerAddress: string
   signature?: string
   status: TriggerStatus
@@ -24,11 +29,11 @@ export interface ConditionalBuyTrigger {
   targetUsd: number
 }
 
-function load(): ConditionalBuyTrigger[] {
+function load(): PriceTrigger[] {
   const raw = storage.getString(KEY)
   if (!raw) return []
   try {
-    return JSON.parse(raw) as ConditionalBuyTrigger[]
+    return JSON.parse(raw) as PriceTrigger[]
   } catch {
     return []
   }
@@ -36,9 +41,9 @@ function load(): ConditionalBuyTrigger[] {
 
 // Headless task and foreground UI share this JS runtime (see price-store.ts), so this single atom, loaded once
 // from MMKV at import time, stays in sync across both without extra plumbing.
-export const $triggers = atom<ConditionalBuyTrigger[]>(load())
+export const $triggers = atom<PriceTrigger[]>(load())
 
-function persist(triggers: ConditionalBuyTrigger[]) {
+function persist(triggers: PriceTrigger[]) {
   storage.set(KEY, JSON.stringify(triggers))
   $triggers.set(triggers)
 }
@@ -46,11 +51,12 @@ function persist(triggers: ConditionalBuyTrigger[]) {
 export function createTrigger(input: {
   amountLamports: bigint
   direction: TriggerDirection
+  kind: TriggerKind
   ownerAddress: string
   symbol: Symbol
   targetUsd: number
-}): ConditionalBuyTrigger {
-  const trigger: ConditionalBuyTrigger = {
+}): PriceTrigger {
+  const trigger: PriceTrigger = {
     ...input,
     amountLamports: input.amountLamports.toString(),
     createdAt: Date.now(),

@@ -5,7 +5,7 @@ import { APP_CLUSTER_STORAGE_KEY, APP_STORAGE_ID } from '@/features/cluster/data
 import { createSolanaClient } from '@/features/cluster/data-access/create-solana-client'
 import { resolveActiveSolanaCluster } from '@/features/cluster/data-access/cluster-store'
 import { createMmkvCache } from '@/features/cluster/data-access/mmkv-cache'
-import { evaluateTriggers } from '@/features/conditional-buy/util/evaluate-triggers'
+import { evaluateTriggers } from '@/features/price-triggers/util/evaluate-triggers'
 import { fetchPrices } from '@/features/prices/util/fetch-prices'
 import CueNative from '../../../../modules/cue-native'
 
