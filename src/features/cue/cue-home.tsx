@@ -6,13 +6,19 @@ import Animated, { FadeInDown, LinearTransition } from 'react-native-reanimated'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { useAppCluster } from '@/features/cluster/data-access/cluster-provider'
-import { $cue, flow, SUGGESTIONS } from '@/features/cue/data-access/cue-store'
+import { flow, SUGGESTIONS } from '@/features/cue/data-access/cue-store'
+import { $triggers, cancelTrigger, describeTrigger } from '@/features/price-triggers/data-access/trigger-store'
 import { useCue } from '@/features/cue/cue-theme'
 import { CuePage, Glass, Press, Ring, Row, Rows, SectionLabel, Txt } from '@/features/cue/ui/cue-ui'
 import { useGetBalance } from '@/features/wallet/data-access/use-get-balance'
 
 const LAMPORTS = 1_000_000_000n
 const enter = (i: number) => FadeInDown.delay(i * 55).duration(550)
+const MANUAL = [
+  { icon: 'arrow-up-circle-outline', kind: 'send', label: 'Send' },
+  { icon: 'trending-down-outline', kind: 'buy', label: 'Buy' },
+  { icon: 'shield-checkmark-outline', kind: 'guard', label: 'Guard' },
+] as const
 
 function formatSol(lamports: bigint) {
   const whole = lamports / LAMPORTS
@@ -25,7 +31,7 @@ export function CueHome() {
   const insets = useSafeAreaInsets()
   const { account } = useMobileWallet()
   const { cluster } = useAppCluster()
-  const { rules } = useStore($cue)
+  const rules = useStore($triggers).filter((t) => t.status === 'active')
   const balance = useGetBalance(account!.address)
   const value = balance.data?.value
   const address = account!.address.toString()
@@ -84,30 +90,55 @@ export function CueHome() {
             {rules.length ? (
               rules.map((r, i) => (
                 <Animated.View entering={FadeInDown.duration(500)} key={r.id} layout={LinearTransition}>
-                  <Row detail={r.detail} last={i === rules.length - 1} title={r.title} />
+                  <Row
+                    detail={describeTrigger(r).detail}
+                    last={i === rules.length - 1}
+                    right={
+                      <Press label={`Cancel ${describeTrigger(r).title}`} onPress={() => cancelTrigger(r.id)}>
+                        <Ionicons color={c.muted} name="close-circle" size={22} />
+                      </Press>
+                    }
+                    title={describeTrigger(r).title}
+                  />
                 </Animated.View>
               ))
             ) : (
               <Txt style={{ fontSize: 15, paddingVertical: 22, textAlign: 'center' }} v="sub">
-                No rules yet. Try saying one below.
+                No rules yet. Say one, or set one up below.
               </Txt>
             )}
           </Rows>
         </Animated.View>
 
         <Animated.View entering={enter(3)}>
-          <SectionLabel>Try saying</SectionLabel>
+          <SectionLabel>Do it yourself</SectionLabel>
+          <View style={{ flexDirection: 'row', gap: 10 }}>
+            {MANUAL.map((m) => (
+              <View key={m.kind} style={{ flex: 1 }}>
+                <Press label={m.label} onPress={() => flow.openCompose(m.kind)}>
+                  <Glass radius={22} style={{ alignItems: 'center', gap: 8, paddingVertical: 16 }}>
+                    <Ionicons color={c.text} name={m.icon} size={22} />
+                    <Txt style={{ fontSize: 14, fontWeight: '600' }}>{m.label}</Txt>
+                  </Glass>
+                </Press>
+              </View>
+            ))}
+          </View>
         </Animated.View>
-        <Animated.View entering={enter(4)} style={{ marginHorizontal: -20 }}>
+
+        <Animated.View entering={enter(4)}>
+          <SectionLabel>Or try saying</SectionLabel>
+        </Animated.View>
+        <Animated.View entering={enter(5)} style={{ marginHorizontal: -20 }}>
           <ScrollView
             contentContainerStyle={{ gap: 8, paddingHorizontal: 20 }}
             horizontal
             showsHorizontalScrollIndicator={false}
           >
-            {SUGGESTIONS.map((s) => (
-              <Press key={s.key} label={s.label} onPress={() => flow.startListening(s.key)}>
+            {SUGGESTIONS.map((text) => (
+              <Press key={text} label={text} onPress={() => flow.startListening(text)}>
                 <Glass radius={999} style={{ paddingHorizontal: 15, paddingVertical: 9 }}>
-                  <Txt style={{ fontSize: 14 }}>{s.label}</Txt>
+                  <Txt style={{ fontSize: 14 }}>{text}</Txt>
                 </Glass>
               </Press>
             ))}
@@ -123,7 +154,7 @@ export function CueHome() {
         <View style={{ alignItems: 'center', height: 76, justifyContent: 'center', width: 76 }}>
           <Ring size={76} />
           <Ring delay={1400} size={76} />
-          <Press label="Talk to Cue" onPress={() => flow.startListening('send')}>
+          <Press label="Talk to Cue" onPress={flow.startLiveListening}>
             <View
               style={{
                 alignItems: 'center',

@@ -17,7 +17,13 @@ import { useQueryClient } from '@tanstack/react-query'
 
 import { useAppCluster } from '@/features/cluster/data-access/cluster-provider'
 import { identity } from '@/features/core/data-access/app-providers'
-import { $cue, actions, shortAddr } from '@/features/cue/data-access/cue-store'
+import { $cue, actions, pushLogEntry, shortAddr } from '@/features/cue/data-access/cue-store'
+import {
+  $delegatedLamports,
+  $triggers,
+  setDelegatedLamports,
+  stopBuyTriggers,
+} from '@/features/price-triggers/data-access/trigger-store'
 import { SPRING, useCue } from '@/features/cue/cue-theme'
 import { CuePage, Press, Row, Rows, SectionLabel, Segment, Txt } from '@/features/cue/ui/cue-ui'
 import { setTheme, type Theme, useTheme } from '@/features/shell/data-access/use-theme'
@@ -27,7 +33,7 @@ import { formatError } from '@/features/wallet/util/format-error'
 const THEMES: readonly Theme[] = ['dark', 'light', 'system']
 const enter = (i: number) => FadeInDown.delay(i * 55).duration(550)
 
-function RevokeButton({ ruleId, title }: { ruleId: string; title: string }) {
+function RevokeButton() {
   const c = useCue()
   const { account } = useMobileWallet()
   const { client, cluster } = useAppCluster()
@@ -40,7 +46,7 @@ function RevokeButton({ ruleId, title }: { ruleId: string; title: string }) {
     setLoading(true)
     setError(null)
     try {
-      await executeDelegationRevoke({
+      const signature = await executeDelegationRevoke({
         account,
         chain: cluster.id,
         client,
@@ -50,7 +56,15 @@ function RevokeButton({ ruleId, title }: { ruleId: string; title: string }) {
         queryClient.invalidateQueries({ queryKey: ['get-balance'] }),
         queryClient.invalidateQueries({ queryKey: ['get-transaction-signatures'] }),
       ])
-      actions.revoke(ruleId)
+      setDelegatedLamports(null)
+      const stopped = stopBuyTriggers('Permission revoked')
+      pushLogEntry({
+        amount: '—',
+        detail: `Just now${stopped ? ` — stopped ${stopped} buy rule${stopped === 1 ? '' : 's'}` : ''}`,
+        signature,
+        status: 'Confirmed',
+        title: 'Permission revoked',
+      })
     } catch (err) {
       console.error('[CueRevoke] Revocation error:', err)
       setError(formatError(err))
@@ -61,7 +75,7 @@ function RevokeButton({ ruleId, title }: { ruleId: string; title: string }) {
 
   return (
     <View style={{ alignItems: 'flex-end', gap: 4 }}>
-      <Press label={`Revoke ${title}`} onPress={handleRevoke}>
+      <Press label="Revoke permission" onPress={handleRevoke}>
         <View
           style={{
             alignItems: 'center',
@@ -130,9 +144,10 @@ function LinkRow({ href, label }: { href: '/settings/cluster' | '/tools'; label:
 export function CueSettings() {
   const insets = useSafeAreaInsets()
   const { activeTheme } = useTheme()
-  const { contacts, rules, wake } = useStore($cue)
+  const { contacts, wake } = useStore($cue)
+  const delegated = useStore($delegatedLamports)
+  const buyRules = useStore($triggers).filter((t) => t.kind === 'buy' && t.status === 'active').length
   const { disconnect } = useMobileWallet()
-  const delegated = rules.filter((r) => r.delegated)
 
   return (
     <CuePage>
@@ -149,17 +164,15 @@ export function CueSettings() {
         <Animated.View entering={enter(1)}>
           <SectionLabel first>Permissions</SectionLabel>
           <Rows>
-            {delegated.length ? (
-              delegated.map((r, i) => (
-                <Animated.View exiting={FadeOutLeft.duration(260)} key={r.id} layout={LinearTransition}>
-                  <Row
-                    detail="Ends Oct 4"
-                    last={i === delegated.length - 1}
-                    right={<RevokeButton ruleId={r.id} title={r.title} />}
-                    title={r.title}
-                  />
-                </Animated.View>
-              ))
+            {delegated !== null ? (
+              <Animated.View exiting={FadeOutLeft.duration(260)} layout={LinearTransition}>
+                <Row
+                  detail={`${buyRules} active buy rule${buyRules === 1 ? '' : 's'} · until you revoke`}
+                  last
+                  right={<RevokeButton />}
+                  title={`Spend up to ${(Number(delegated) / 1e9).toFixed(4)} WSOL`}
+                />
+              </Animated.View>
             ) : (
               <Txt style={{ fontSize: 15, paddingVertical: 22, textAlign: 'center' }} v="sub">
                 Nothing granted. Cue asks first, once.

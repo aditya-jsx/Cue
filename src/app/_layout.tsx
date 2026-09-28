@@ -7,13 +7,20 @@ import { View } from 'react-native'
 import { CueConnect } from '@/features/cue/cue-connect'
 import { CueFlow } from '@/features/cue/cue-flow'
 import { CueTabBar } from '@/features/cue/cue-tab-bar'
+import { flow } from '@/features/cue/data-access/cue-store'
+import { startWakeWord } from '@/features/cue/util/start-wake-word'
 import { AppProviders } from '@/features/core/data-access/app-providers'
 import { useTheme } from '@/features/shell/data-access/use-theme'
 import { startPriceEngine } from '@/features/prices/util/start-price-engine'
+import CueNative from '../../modules/cue-native'
 
 export default function Layout() {
   useEffect(() => {
     startPriceEngine().catch((e) => console.warn('[CuePriceEngine] start failed', e))
+    startWakeWord().catch((e) => console.warn('[CueWakeWord] start failed', e))
+
+    const subscription = CueNative.addListener('onWakeWordDetected', () => flow.startLiveListening())
+    return () => subscription.remove()
   }, [])
 
   return (

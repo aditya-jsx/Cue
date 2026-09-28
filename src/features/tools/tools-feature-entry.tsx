@@ -34,22 +34,6 @@ const toolItems = [
     summary: 'Proves the session key can act without the user, within the approved cap.',
     title: 'Autonomous action',
   },
-  {
-    description: 'Set a price trigger; the price engine fires the autonomous action automatically when it hits.',
-    href: '/tools/conditional-buy',
-    icon: 'trending-up-outline',
-    id: 'conditional-buy',
-    summary: 'Trigger registration → price engine evaluates → autonomous execution fires.',
-    title: 'Conditional Buy',
-  },
-  {
-    description: 'Set a stop price; the price engine exits automatically to protect your position when it hits.',
-    href: '/tools/portfolio-guard',
-    icon: 'shield-checkmark-outline',
-    id: 'portfolio-guard',
-    summary: 'Trigger registration → price engine evaluates → autonomous execution fires.',
-    title: 'Portfolio Guard',
-  },
 ] as const satisfies readonly ToolItem[]
 
 export function ToolsFeatureEntry() {

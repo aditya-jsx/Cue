@@ -1,20 +1,23 @@
 import { isAddress } from '@solana/kit'
 import { atom } from 'nanostores'
+import { createMMKV } from 'react-native-mmkv'
 
-import { type Intent, parseIntent } from '@/features/cue/data-access/parse-intent'
+import { APP_STORAGE_ID } from '@/features/cluster/data-access/create-cluster-props'
+import { type Intent, normalizeTranscript, WATCHABLE_TOKENS } from '@/features/cue/data-access/parse-intent'
+import { type Draft, understand } from '@/features/cue/data-access/understand'
+import {
+  createTrigger,
+  formatUsd,
+  type GuardAction,
+  setDelegatedLamports,
+  type TriggerDirection,
+} from '@/features/price-triggers/data-access/trigger-store'
+import { $prices, type Symbol } from '@/features/prices/data-access/price-store'
+import CueNative from '../../../../modules/cue-native'
 
-export type IntentKey = 'buy' | 'guard' | 'nope' | 'send'
-export type Screen = 'confirm' | 'delegate' | 'listen' | 'nope' | 'success'
+export type Screen = 'compose' | 'confirm' | 'delegate' | 'listen' | 'nope' | 'success'
+export type ComposeKind = 'buy' | 'guard' | 'send'
 
-export type Rule = {
-  delegated: boolean
-  delegateAddress?: string
-  detail: string
-  id: string
-  signature?: string
-  title: string
-  tokenAccount?: string
-}
 export type LogEntry = {
   amount: string
   detail: string
@@ -24,35 +27,54 @@ export type LogEntry = {
   title: string
 }
 
-// Canned phrases stand in for the voice transcript until speech capture exists.
-// TODO(cue): replace PHRASES with the real transcript, and parseIntent() with the LLM parser + deterministic validation.
-export const PHRASES: Record<IntentKey, string> = {
-  buy: 'Buy $20 of JUP if it drops to 85 cents',
-  guard: 'Alert me if my portfolio drops 10% today',
-  nope: 'Swap all my SOL to Bonk',
-  send: 'Send 2 SOL to Alex',
-}
+/** An intent that passed deterministic validation, with everything execution needs already resolved. */
+export type Plan =
+  | { amount: number; kind: 'send'; recipient: string; recipientName: string }
+  | {
+      amountLamports: bigint
+      amountUsd: number
+      direction: TriggerDirection
+      expiresAt: number
+      kind: 'buy'
+      priceUsd: number
+      solUsd: number
+      symbol: Symbol
+      targetUsd: number
+    }
+  | { action: GuardAction; baselineUsd: number; kind: 'guard'; thresholdPct: number; timeframe: '1h' | '24h' }
+  | { kind: 'nope'; reason: string }
 
-export const SUGGESTIONS: { key: IntentKey; label: string }[] = [
-  { key: 'send', label: 'Send 2 SOL to Alex' },
-  { key: 'buy', label: 'Buy $20 of JUP below 85 cents' },
-  { key: 'guard', label: 'Alert me if I drop 10%' },
-  { key: 'nope', label: 'Swap all my SOL to Bonk' },
+// Tapping one plays it through the same listening → parse → validate path as speaking it.
+export const SUGGESTIONS = [
+  'Send 0.1 SOL to Alex',
+  'Buy $5 of JUP if it drops to 30 cents',
+  'Alert me if my portfolio drops 10% today',
+  'Swap all my SOL to Bonk',
 ]
 
-const KEY_OF: Record<Intent['intent'], IntentKey> = {
-  conditional_buy: 'buy',
-  instant_send: 'send',
-  portfolio_guard: 'guard',
-  unsupported: 'nope',
+const HOUR = 3_600_000
+const DAY = 24 * HOUR
+const MAX_RULE_USD = 50
+const LOADING_PRICES = "I'm still loading live prices. Try again in a few seconds."
+
+const storage = createMMKV({ id: APP_STORAGE_ID })
+const LOG_KEY = 'cue:activity-log'
+const WAKE_KEY = 'cue:wake-enabled'
+
+function loadLog(): LogEntry[] {
+  try {
+    return JSON.parse(storage.getString(LOG_KEY) ?? '[]') as LogEntry[]
+  } catch {
+    return []
+  }
 }
 
 export const shortAddr = (a: string) => (a.length > 12 ? `${a.slice(0, 4)}…${a.slice(-4)}` : a)
+const newId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
 export const $cue = atom<{
   contacts: { address: string; name: string }[]
   log: LogEntry[]
-  rules: Rule[]
   wake: boolean
 }>({
   // Throwaway devnet addresses (no keys kept). Replace Alex with a wallet you control to see funds arrive.
@@ -60,165 +82,252 @@ export const $cue = atom<{
     { address: 'BWGt3Yg3pKVLTJbaufw7xNzMesgsUAKTwVHRnsYg6bzv', name: 'Alex' },
     { address: '9h3wCAQfwHobHRrh5uEgyBzMPsxcGEh8V5rq2sbCABrJ', name: 'Mira' },
   ],
-  log: [
-    { amount: '15 USDC', detail: 'Yesterday, 6:02 PM, by you', id: 'l1', status: 'Confirmed', title: 'Sent to Mira' },
-    {
-      amount: '-10.4%',
-      detail: 'Yesterday, 11:30 AM, alert sent',
-      id: 'l2',
-      status: 'Alert',
-      title: 'Guard triggered',
-    },
-    { amount: '0.5 SOL', detail: 'Monday, 2:14 PM, by you', id: 'l3', status: 'Confirmed', title: 'Sent to Alex' },
-  ],
-  rules: [{ delegated: false, detail: 'Within 24 hours', id: 'r0', title: 'Pause if portfolio drops 15%' }],
-  wake: true,
+  log: loadLog(),
+  wake: storage.getBoolean(WAKE_KEY) ?? true,
 })
 
+/** Prepends a real Activity entry — used by every execution path (voice, manual, and the background engine). */
+export function pushLogEntry(entry: Omit<LogEntry, 'id'>) {
+  const cue = $cue.get()
+  const log = [{ ...entry, id: newId() }, ...cue.log].slice(0, 100)
+  storage.set(LOG_KEY, JSON.stringify(log))
+  $cue.set({ ...cue, log })
+}
+
+const consonants = (s: string) => s.toLowerCase().replace(/[^a-z]/g, '').replace(/[aeiou]/g, '')
+
+/** A raw address passes through; otherwise match a saved contact by name. Falls back to a consonant-only match
+ * ("Alex" heard as "LX") since on-device STT sometimes drops the vowels of a short trailing name. */
+export function resolveRecipient(recipient: string): { address: string; name: string } | null {
+  const r = recipient.trim()
+  if (isAddress(r)) return { address: r, name: shortAddr(r) }
+  const { contacts } = $cue.get()
+  const skeleton = consonants(r)
+  return (
+    contacts.find((c) => c.name.toLowerCase() === r.toLowerCase()) ??
+    (skeleton ? contacts.find((c) => consonants(c.name) === skeleton) : undefined) ??
+    null
+  )
+}
+
+const nope = (reason: string): Plan => ({ kind: 'nope', reason })
+
+/** Words the speech recognizer should favor: Cue's verbs, units, tokens and the user's contacts. */
+export function speechHints(): string[] {
+  const words = ['Cue', 'send', 'buy', 'dollars', 'cents', 'percent', 'portfolio', 'pause', 'alert', 'Jupiter', 'Solana']
+  return [...words, ...WATCHABLE_TOKENS, ...$cue.get().contacts.map((c) => c.name)]
+}
+
+/** Deterministic validation between the parser and anything that executes — the same gate for voice and manual. */
+export function prepareIntent(intent: Intent): Plan {
+  const prices = $prices.get()
+  switch (intent.intent) {
+    case 'unsupported':
+      return nope(intent.reason)
+    case 'instant_send': {
+      if (intent.token !== 'SOL') return nope(`I can only send SOL for now, not ${intent.token}.`)
+      if (!(intent.amount > 0)) return nope('The amount must be more than zero.')
+      const to = resolveRecipient(intent.recipient)
+      if (!to) return nope(`I don't have a contact named ${intent.recipient}.`)
+      return { amount: intent.amount, kind: 'send', recipient: to.address, recipientName: to.name }
+    }
+    case 'conditional_buy': {
+      if (!WATCHABLE_TOKENS.includes(intent.token)) {
+        return nope(`I can only watch ${WATCHABLE_TOKENS.join(' and ')} prices for now.`)
+      }
+      if (!(intent.amount_usd > 0) || !(intent.threshold_usd > 0)) {
+        return nope('The amount and the price must both be more than zero.')
+      }
+      const token = prices[intent.token as Symbol]
+      if (!prices.SOL || !token) return nope(LOADING_PRICES)
+      if (intent.amount_usd > MAX_RULE_USD) return nope(`Cue can set aside up to $${MAX_RULE_USD} per rule for now.`)
+      const expiresAt = intent.expires_at ? Date.parse(intent.expires_at) : NaN
+      return {
+        // Spends delegated WSOL, so the dollar amount is sized in SOL at today's price.
+        amountLamports: BigInt(Math.round((intent.amount_usd / prices.SOL.usd) * 1e9)),
+        amountUsd: intent.amount_usd,
+        direction: intent.condition,
+        expiresAt: Number.isFinite(expiresAt) ? expiresAt : Date.now() + DAY,
+        kind: 'buy',
+        priceUsd: token.usd,
+        solUsd: prices.SOL.usd,
+        symbol: intent.token as Symbol,
+        targetUsd: intent.threshold_usd,
+      }
+    }
+    case 'portfolio_guard':
+      if (!(intent.threshold_pct > 0 && intent.threshold_pct < 100)) return nope('The drop has to be between 0% and 100%.')
+      if (!prices.SOL) return nope(LOADING_PRICES)
+      return {
+        action: intent.action,
+        baselineUsd: prices.SOL.usd,
+        kind: 'guard',
+        thresholdPct: intent.threshold_pct,
+        timeframe: intent.timeframe,
+      }
+  }
+}
+
 export const $flow = atom<{
-  delegateAddress: string | null
-  guardMode: 0 | 1
-  intent: IntentKey
-  parsed: Intent
-  recipient: string | null // resolved wallet address for instant_send
+  compose: ComposeKind
+  draft: Draft | null // what was understood (even partly), so "Edit details" can pre-fill the form
+  live: boolean // true when `text` is a real transcript streaming in, not a tapped suggestion
+  plan: Plan
   signature: string | null // set once a real transaction landed
   stack: Screen[]
-  text: string // what the user said
-  tokenAccount: string | null
+  text: string // what the user said, or a sentence describing what they entered
 }>({
-  delegateAddress: null,
-  guardMode: 0,
-  intent: 'send',
-  parsed: { intent: 'unsupported', reason: '' },
-  recipient: null,
+  compose: 'send',
+  draft: null,
+  live: false,
+  plan: nope(''),
   signature: null,
   stack: [],
   text: '',
-  tokenAccount: null,
 })
 
-let uid = 0
-const nextId = () => `n${++uid}`
 const push = (s: Screen) => $flow.set({ ...$flow.get(), stack: [...$flow.get().stack, s] })
+const idle = () => $flow.get().stack.length === 0
+const EDITABLE: Partial<Record<Intent['intent'], ComposeKind>> = {
+  conditional_buy: 'buy',
+  instant_send: 'send',
+  portfolio_guard: 'guard',
+}
+let understanding = 0
 
-/** A raw address passes through; otherwise match a saved contact by name. */
-export function resolveRecipient(recipient: string): string | null {
-  const r = recipient.trim()
-  if (isAddress(r)) return r
-  return $cue.get().contacts.find((c) => c.name.toLowerCase() === r.toLowerCase())?.address ?? null
+function route(text: string, plan: Plan, draft: Draft | null) {
+  $flow.set({ ...$flow.get(), draft, plan, signature: null, text })
+  push(plan.kind === 'nope' ? 'nope' : 'confirm')
 }
 
 export const flow = {
   back: () => $flow.set({ ...$flow.get(), stack: $flow.get().stack.slice(0, -1) }),
   cancel: () => $flow.set({ ...$flow.get(), stack: [] }),
-  done() {
-    const { delegateAddress, guardMode, intent, parsed, recipient, signature, tokenAccount } = $flow.get()
-    const cue = $cue.get()
-    if (intent === 'send' && parsed.intent === 'instant_send') {
-      $cue.set({
-        ...cue,
-        log: [
-          {
-            amount: `${parsed.amount} ${parsed.token}`,
-            detail: 'Just now, by you',
-            id: nextId(),
-            signature: signature ?? undefined,
-            status: 'Confirmed',
-            title: `Sent to ${recipient && parsed.recipient === recipient ? shortAddr(recipient) : parsed.recipient}`,
-          },
-          ...cue.log,
-        ],
-      })
-    }
-    if (intent === 'buy') {
-      $cue.set({
-        ...cue,
-        rules: [
-          ...cue.rules,
-          {
-            delegated: true,
-            delegateAddress: delegateAddress ?? undefined,
-            detail: 'Expires Oct 4, 11:59 PM',
-            id: nextId(),
-            signature: signature ?? undefined,
-            title: 'Buy $20 of JUP below $0.85',
-            tokenAccount: tokenAccount ?? undefined,
-          },
-        ],
-      })
-    }
-    if (intent === 'guard') {
-      $cue.set({
-        ...cue,
-        rules: [
-          ...cue.rules,
-          {
-            delegated: false,
-            detail: 'Within 24 hours',
-            id: nextId(),
-            title: guardMode ? 'Pause if portfolio drops 10%' : 'Alert if portfolio drops 10%',
-          },
-        ],
-      })
-    }
-    flow.cancel()
+  done: () => flow.cancel(),
+  /** Every spoken or tapped sentence ends here: understand, validate, route. */
+  async finishListening(raw: string) {
+    const text = normalizeTranscript(raw)
+    if (!text) return route(text, nope("I didn't catch that."), null)
+    const ticket = ++understanding
+    const { draft, intent } = await understand(raw, $cue.get().contacts.map((c) => c.name))
+    // Cancelled, or a newer request started, while Claude was thinking: drop this answer.
+    const { stack } = $flow.get()
+    if (ticket !== understanding || stack.length !== 1 || stack[0] !== 'listen') return
+    route(text, prepareIntent(intent), draft)
   },
-  /** Called when listening ends: route to confirm, or to the "can't do that" sheet with a reason. */
-  parsed() {
-    const f = $flow.get()
-    if (f.parsed.intent === 'instant_send') {
-      const to = resolveRecipient(f.parsed.recipient)
-      if (!to) {
-        $flow.set({
-          ...f,
-          intent: 'nope',
-          parsed: { intent: 'unsupported', reason: `I don't have a contact named ${f.parsed.recipient}.` },
-          stack: [...f.stack, 'nope'],
-        })
-        return
-      }
-      $flow.set({ ...f, recipient: to, stack: [...f.stack, 'confirm'] })
-      return
-    }
-    push(f.intent === 'nope' ? 'nope' : 'confirm')
+  /** Speech got a detail wrong ("$55" for "five dollars"): reopen what was understood as a pre-filled form. */
+  edit() {
+    const { draft } = $flow.get()
+    const kind = draft && EDITABLE[draft.intent]
+    if (kind) $flow.set({ ...$flow.get(), compose: kind, live: false, stack: ['compose'] })
   },
+  openCompose(kind: ComposeKind) {
+    if (!idle()) return
+    $flow.set({ ...$flow.get(), compose: kind, draft: null, live: false, stack: ['compose'] })
+  },
+  /** From a manual entry, back to the form; from speech, listen again. */
   retry() {
+    if ($flow.get().stack[0] === 'compose') return flow.back()
     flow.cancel()
-    flow.startListening('send')
+    flow.startLiveListening()
   },
   review: () => push('delegate'),
-  setGuardMode: (m: 0 | 1) => $flow.set({ ...$flow.get(), guardMode: m }),
-  signed: (signature?: string, meta?: { delegateAddress?: string; tokenAccount?: string }) =>
-    $flow.set({
-      ...$flow.get(),
-      delegateAddress: meta?.delegateAddress ?? $flow.get().delegateAddress,
-      signature: signature ?? null,
-      stack: [...$flow.get().stack, 'success'],
-      tokenAccount: meta?.tokenAccount ?? $flow.get().tokenAccount,
-    }),
-  startListening(key: IntentKey) {
-    const parsed = parseIntent(PHRASES[key])
-    $flow.set({
-      delegateAddress: null,
-      guardMode: parsed.intent === 'portfolio_guard' && parsed.action === 'pause_activity' ? 1 : 0,
-      intent: KEY_OF[parsed.intent],
-      parsed,
-      recipient: null,
-      signature: null,
-      stack: ['listen'],
-      text: PHRASES[key],
-      tokenAccount: null,
-    })
+  setGuardAction(action: GuardAction) {
+    const { plan } = $flow.get()
+    if (plan.kind === 'guard') $flow.set({ ...$flow.get(), plan: { ...plan, action } })
+  },
+  signed(signature?: string) {
+    $flow.set({ ...$flow.get(), signature: signature ?? null })
+    push('success')
+  },
+  /** Suggestion chip: plays the sentence through the listening screen, then the same path as speech. */
+  startListening(text: string) {
+    if (!idle()) return
+    $flow.set({ ...$flow.get(), live: false, signature: null, stack: ['listen'], text })
+  },
+  /** Mic button or wake word. No-ops if a flow screen is already open, so a stray wake word can't interrupt it. */
+  startLiveListening() {
+    if (!idle()) return
+    $flow.set({ ...$flow.get(), live: true, signature: null, stack: ['listen'], text: '' })
+  },
+  setTranscript: (text: string) => $flow.set({ ...$flow.get(), text }),
+  /** Manual entry: the form builds the same Intent the parser would, and goes through the same gate. */
+  submitIntent(intent: Intent, text: string) {
+    route(text, prepareIntent(intent), intent.intent === 'unsupported' ? null : intent)
   },
 }
 
+/* ---------- execution side effects (called once the user has confirmed) ---------- */
+
+export function recordSend(signature: string) {
+  const { plan } = $flow.get()
+  if (plan.kind !== 'send') return
+  pushLogEntry({
+    amount: `${plan.amount} SOL`,
+    detail: 'Just now, by you',
+    signature,
+    status: 'Confirmed',
+    title: `Sent to ${plan.recipientName}`,
+  })
+}
+
+export function activateBuy(ownerAddress: string, signature: string, totalApprovedLamports: bigint) {
+  const { plan } = $flow.get()
+  if (plan.kind !== 'buy') return
+  createTrigger({
+    amountLamports: plan.amountLamports.toString(),
+    amountUsd: plan.amountUsd,
+    direction: plan.direction,
+    expiresAt: plan.expiresAt,
+    kind: 'buy',
+    ownerAddress,
+    symbol: plan.symbol,
+    targetUsd: plan.targetUsd,
+  })
+  setDelegatedLamports(totalApprovedLamports)
+  pushLogEntry({
+    amount: `$${plan.amountUsd}`,
+    detail: 'Just now — permission granted',
+    signature,
+    status: 'Confirmed',
+    title: `Rule set: buy ${plan.symbol} ${plan.direction} ${formatUsd(plan.targetUsd)}`,
+  })
+}
+
+export function activateGuard(ownerAddress: string) {
+  const { plan } = $flow.get()
+  if (plan.kind !== 'guard') return
+  createTrigger({
+    action: plan.action,
+    baselineAt: Date.now(),
+    baselineUsd: plan.baselineUsd,
+    kind: 'guard',
+    ownerAddress,
+    thresholdPct: plan.thresholdPct,
+    windowMs: plan.timeframe === '1h' ? HOUR : DAY,
+  })
+  pushLogEntry({
+    amount: `-${plan.thresholdPct}%`,
+    detail: `Just now — watching from SOL ${formatUsd(plan.baselineUsd)}`,
+    status: 'Confirmed',
+    title: plan.action === 'pause_activity' ? 'Guard on: pause' : 'Guard on: alert',
+  })
+}
+
+/* ---------- wake word ---------- */
+
+/** Hands the mic back to the wake-word service, unless the user turned it off. */
+export function resumeWakeWord() {
+  if ($cue.get().wake) CueNative.startWakeWordService()
+}
+
 export const actions = {
-  revoke(id: string) {
-    const cue = $cue.get()
-    $cue.set({ ...cue, rules: cue.rules.filter((r) => r.id !== id) })
-  },
   toggleWake() {
     const cue = $cue.get()
-    $cue.set({ ...cue, wake: !cue.wake })
+    const wake = !cue.wake
+    storage.set(WAKE_KEY, wake)
+    $cue.set({ ...cue, wake })
+    if (wake) CueNative.startWakeWordService()
+    else CueNative.stopWakeWordService()
   },
 }

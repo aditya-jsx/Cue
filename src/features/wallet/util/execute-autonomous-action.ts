@@ -4,8 +4,6 @@ import {
   appendTransactionMessageInstructions,
   compileTransaction,
   createTransactionMessage,
-  getBase64EncodedWireTransaction,
-  getSignatureFromTransaction,
   partiallySignTransactionWithSigners,
   setTransactionMessageFeePayer,
   setTransactionMessageLifetimeUsingBlockhash,
@@ -13,6 +11,7 @@ import {
 
 import { getSessionKey } from '@/features/cue/data-access/session-key'
 import { confirmSignature } from '@/features/wallet/util/confirm-signature'
+import { sendSignedTransaction } from '@/features/wallet/util/send-signed-transaction'
 import {
   findAtaAddress,
   getCreateAssociatedTokenAccountIdempotentInstruction,
@@ -73,11 +72,7 @@ export async function executeAutonomousAction({
   )
 
   const signed = await partiallySignTransactionWithSigners([sessionKey], compileTransaction(message))
-  const signature = getSignatureFromTransaction(signed)
-
-  await client.rpc
-    .sendTransaction(getBase64EncodedWireTransaction(signed), { encoding: 'base64', preflightCommitment: 'confirmed' })
-    .send()
+  const signature = await sendSignedTransaction(client, signed)
 
   try {
     await confirmSignature({ lastValidBlockHeight: latestBlockhash.lastValidBlockHeight, rpc: client.rpc, signature })

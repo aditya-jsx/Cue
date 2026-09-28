@@ -9,9 +9,7 @@ import {
   compileTransactionMessage,
   createTransactionMessage,
   getBase64Decoder,
-  getBase64EncodedWireTransaction,
   getCompiledTransactionMessageEncoder,
-  getSignatureFromTransaction,
   pipe,
   setTransactionMessageComputeUnitLimit,
   setTransactionMessageComputeUnitPrice,
@@ -23,6 +21,7 @@ import {
 import { clearSessionKey, getOrCreateSessionKey } from '@/features/cue/data-access/session-key'
 import { confirmSignature } from '@/features/wallet/util/confirm-signature'
 import { getTransferSolInstruction } from '@/features/wallet/util/get-transfer-sol-instruction'
+import { sendSignedTransaction } from '@/features/wallet/util/send-signed-transaction'
 import {
   findAtaAddress,
   getApproveInstruction,
@@ -226,20 +225,7 @@ export async function executeDelegationGrant({
     return signed
   })
 
-  const signature = getSignatureFromTransaction(signedTx)
-  try {
-    await client.rpc
-      .sendTransaction(getBase64EncodedWireTransaction(signedTx), {
-        encoding: 'base64',
-        preflightCommitment: 'confirmed',
-      })
-      .send()
-  } catch (err: unknown) {
-    const rpcErr = err as { context?: { __serverMessage?: string; logs?: string[] }; message?: string }
-    console.error('[CueDelegation] sendTransaction error details:', rpcErr?.context)
-    const details = rpcErr?.context?.__serverMessage || rpcErr?.message || String(err)
-    throw new Error(`Simulation/broadcast failed: ${details}`)
-  }
+  const signature = await sendSignedTransaction(client, signedTx)
 
   try {
     await confirmSignature({
@@ -300,20 +286,7 @@ export async function executeDelegationRevoke({
     return signed
   })
 
-  const signature = getSignatureFromTransaction(signedTx)
-  try {
-    await client.rpc
-      .sendTransaction(getBase64EncodedWireTransaction(signedTx), {
-        encoding: 'base64',
-        preflightCommitment: 'confirmed',
-      })
-      .send()
-  } catch (err: unknown) {
-    const rpcErr = err as { context?: { __serverMessage?: string; logs?: string[] }; message?: string }
-    console.error('[CueDelegation] revoke sendTransaction error details:', rpcErr?.context)
-    const details = rpcErr?.context?.__serverMessage || rpcErr?.message || String(err)
-    throw new Error(`Simulation/broadcast failed: ${details}`)
-  }
+  const signature = await sendSignedTransaction(client, signedTx)
 
   try {
     await confirmSignature({

@@ -8,9 +8,7 @@ import {
   compileTransactionMessage,
   createTransactionMessage,
   getBase64Decoder,
-  getBase64EncodedWireTransaction,
   getCompiledTransactionMessageEncoder,
-  getSignatureFromTransaction,
   isAddress,
   type Lamports,
   pipe,
@@ -23,6 +21,7 @@ import {
 
 import { confirmSignature } from '@/features/wallet/util/confirm-signature'
 import { getTransferSolInstruction } from '@/features/wallet/util/get-transfer-sol-instruction'
+import { sendSignedTransaction } from '@/features/wallet/util/send-signed-transaction'
 
 export interface ExecuteInstantSendOptions {
   account: Account
@@ -130,13 +129,7 @@ export async function executeInstantSend({
   })
 
   // Broadcast via Cue's own RPC endpoint (bypassing Phantom's congested devnet proxy)
-  const signature = getSignatureFromTransaction(signedTx)
-  await client.rpc
-    .sendTransaction(getBase64EncodedWireTransaction(signedTx), {
-      encoding: 'base64',
-      preflightCommitment: 'confirmed',
-    })
-    .send()
+  const signature = await sendSignedTransaction(client, signedTx)
 
   try {
     await confirmSignature({

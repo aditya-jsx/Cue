@@ -1,7 +1,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons'
 import { useStore } from '@nanostores/react'
 import { type ReactNode, useEffect, useState } from 'react'
-import { Pressable, StyleSheet, useWindowDimensions, View } from 'react-native'
+import { Pressable, ScrollView, StyleSheet, TextInput, type TextInputProps, useWindowDimensions, View } from 'react-native'
 import Animated, {
   Easing,
   FadeIn,
@@ -28,12 +28,34 @@ import * as Linking from 'expo-linking'
 
 import { useAppCluster } from '@/features/cluster/data-access/cluster-provider'
 import { identity } from '@/features/core/data-access/app-providers'
-import { $flow, flow, type Screen, shortAddr } from '@/features/cue/data-access/cue-store'
+import {
+  $cue,
+  $flow,
+  activateBuy,
+  activateGuard,
+  type ComposeKind,
+  flow,
+  recordSend,
+  resumeWakeWord,
+  type Screen,
+  speechHints,
+  shortAddr,
+} from '@/features/cue/data-access/cue-store'
+import {
+  activeBuyLamports,
+  formatUsd,
+  type GuardAction,
+  type TriggerDirection,
+} from '@/features/price-triggers/data-access/trigger-store'
+import { shouldFireTrigger } from '@/features/price-triggers/util/should-fire-trigger'
+import type { Draft } from '@/features/cue/data-access/understand'
+import { $prices, type Symbol } from '@/features/prices/data-access/price-store'
+import CueNative from '../../../modules/cue-native'
 import { executeDelegationGrant } from '@/features/wallet/util/execute-delegation'
 import { executeInstantSend } from '@/features/wallet/util/execute-instant-send'
 import { formatError } from '@/features/wallet/util/format-error'
 import { IOS_EASING, useCue } from '@/features/cue/cue-theme'
-import { Backdrop, CueButton, Glass, KV, Press, Ring, Rows, Segment, Txt, useBusy } from '@/features/cue/ui/cue-ui'
+import { Backdrop, CueButton, Glass, KV, Press, Ring, Rows, Segment, Txt } from '@/features/cue/ui/cue-ui'
 
 const ease = Easing.bezierFn(...IOS_EASING)
 const SHEET_IN = SlideInDown.duration(520).easing(ease)
@@ -46,6 +68,7 @@ export function CueFlow() {
   const has = (s: Screen) => stack.includes(s)
   return (
     <View pointerEvents={stack.length ? 'auto' : 'none'} style={StyleSheet.absoluteFill}>
+      {has('compose') ? <Compose key="compose" /> : null}
       {has('listen') ? <Listening key="listen" /> : null}
       {has('confirm') ? <Confirm key="confirm" /> : null}
       {has('nope') ? <NotSupported key="nope" /> : null}
@@ -93,20 +116,57 @@ function Listening() {
   const c = useCue()
   const insets = useSafeAreaInsets()
   const { height } = useWindowDimensions()
-  const { text } = useStore($flow)
-  const words = text.split(' ')
+  const { live, text } = useStore($flow)
+  const words = text.split(' ').filter(Boolean)
   const [shown, setShown] = useState(0)
   const [thinking, setThinking] = useState(false)
 
+  // Scripted phrase: reveal word-by-word on a fixed timer, then auto-parse.
   useEffect(() => {
+    if (live) return
     const t: ReturnType<typeof setTimeout>[] = []
     words.forEach((_, i) => t.push(setTimeout(() => setShown(i + 1), 500 + i * 180)))
     const end = 500 + words.length * 180 + 350
     t.push(setTimeout(() => setThinking(true), end))
-    t.push(setTimeout(flow.parsed, end + 900))
+    t.push(setTimeout(() => void flow.finishListening(text), end + 900))
     return () => t.forEach(clearTimeout)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [live])
+
+  // Real capture: transcript streams in via the store as the user speaks, shown as it arrives.
+  // (Listening remounts fresh each time flow.startLiveListening() is called, so shown/thinking start clean.)
+  useEffect(() => {
+    if (!live) return
+    // The wake-word service holds the mic continuously (AudioRecord), which starves SpeechRecognizer
+    // ("not connected to the recognition service") if both run at once — free the mic for it, then
+    // hand it back once this utterance's result/error arrives (starting it is a no-op if it's already
+    // running, so re-arming it from multiple places here is safe).
+    CueNative.stopWakeWordService()
+    CueNative.startSpeechRecognition(speechHints())
+    let cancelled = false
+    // "Understanding" stays up while Claude reads the transcript; the store drops the answer if the user cancels.
+    const finish = (text: string) => {
+      if (cancelled) return
+      setThinking(true)
+      resumeWakeWord()
+      void flow.finishListening(text)
+    }
+    const subs = [
+      CueNative.addListener('onSpeechPartial', ({ text }) => {
+        if (!cancelled) flow.setTranscript(text)
+      }),
+      CueNative.addListener('onSpeechResult', ({ text }) => finish(text)),
+      CueNative.addListener('onSpeechError', () => finish('')),
+    ]
+    return () => {
+      cancelled = true
+      subs.forEach((s) => s.remove())
+      CueNative.stopSpeechRecognition()
+      resumeWakeWord()
+    }
+  }, [live])
+
+  const visibleWords = live ? words : words.slice(0, shown)
 
   // Vertical positions are proportional to the 844pt prototype so any phone height keeps the same composition.
   const at = (y: number) => (y / 844) * height
@@ -145,7 +205,7 @@ function Listening() {
           top: at(470),
         }}
       >
-        {words.slice(0, shown).map((w, i) => (
+        {visibleWords.map((w, i) => (
           <Animated.Text
             entering={FadeInDown.duration(300)}
             key={i}
@@ -233,34 +293,44 @@ const num = (t: string) => <Txt v="num">{t}</Txt>
 const val = (t: string) => <Txt style={{ fontSize: 15 }}>{t}</Txt>
 
 const LAMPORTS_PER_SOL = 1_000_000_000
+const wsol = (lamports: bigint) => `${(Number(lamports) / LAMPORTS_PER_SOL).toFixed(4)} WSOL`
+const when = (ms: number) => new Date(ms).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
+const moves = (direction: 'above' | 'below') => (direction === 'below' ? 'falls' : 'rises')
+
+function useRefreshWallet() {
+  const queryClient = useQueryClient()
+  return () =>
+    Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['get-balance'] }),
+      queryClient.invalidateQueries({ queryKey: ['get-transaction-signatures'] }),
+    ])
+}
 
 function Confirm() {
-  const { guardMode, intent, parsed, recipient } = useStore($flow)
-  const [busy, run] = useBusy(1100)
+  const { plan } = useStore($flow)
   const { account } = useMobileWallet()
   const { client, cluster } = useAppCluster()
-  const queryClient = useQueryClient()
-  const sendSol = useMutation({
-    mutationFn: (opts: { amountLamports: bigint; destination: string }) =>
-      executeInstantSend({ account: account!, chain: cluster.id, client, identity, ...opts }),
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['get-balance'] }),
-        queryClient.invalidateQueries({ queryKey: ['get-transaction-signatures'] }),
-      ])
-    },
-  })
+  const refreshWallet = useRefreshWallet()
   const [error, setError] = useState<string | null>(null)
-  const send = parsed.intent === 'instant_send' && recipient ? { ...parsed, to: recipient } : null
+  const sendSol = useMutation({
+    mutationFn: (p: { amount: number; recipient: string }) =>
+      executeInstantSend({
+        account: account!,
+        amountLamports: BigInt(Math.round(p.amount * LAMPORTS_PER_SOL)),
+        chain: cluster.id,
+        client,
+        destination: p.recipient,
+        identity,
+      }),
+    onSuccess: refreshWallet,
+  })
 
   async function sign() {
-    if (!send || sendSol.isPending) return
+    if (plan.kind !== 'send' || sendSol.isPending) return
     setError(null)
     try {
-      const signature = await sendSol.mutateAsync({
-        amountLamports: BigInt(Math.round(send.amount * LAMPORTS_PER_SOL)),
-        destination: send.to,
-      })
+      const signature = await sendSol.mutateAsync(plan)
+      recordSend(signature)
       flow.signed(signature)
     } catch (e) {
       // A confirm-timeout still carries the real signature (it was submitted); show it so the user can verify.
@@ -269,16 +339,22 @@ function Confirm() {
     }
   }
 
+  function turnOnGuard() {
+    if (!account) return
+    activateGuard(account.address)
+    flow.signed()
+  }
+
   return (
     <Sheet top={104}>
-      {intent === 'send' && send ? (
+      {plan.kind === 'send' ? (
         <>
           <Animated.View entering={stagger(0)}>
             <Tag>Instant send</Tag>
           </Animated.View>
           <Animated.View entering={stagger(1)}>
             <Txt style={{ fontSize: 54, fontWeight: '700', letterSpacing: -2.43, lineHeight: 54, marginTop: 8 }}>
-              {send.amount} {send.token}
+              {plan.amount} SOL
             </Txt>
           </Animated.View>
           <Animated.View entering={stagger(3)} style={{ marginTop: 22 }}>
@@ -287,8 +363,8 @@ function Confirm() {
                 label="To"
                 value={
                   <Txt style={{ fontSize: 15 }}>
-                    {send.recipient !== send.to ? `${send.recipient} ` : ''}
-                    <Txt v="mono">{shortAddr(send.to)}</Txt>
+                    {plan.recipientName !== shortAddr(plan.recipient) ? `${plan.recipientName} ` : ''}
+                    <Txt v="mono">{shortAddr(plan.recipient)}</Txt>
                   </Txt>
                 }
               />
@@ -298,37 +374,40 @@ function Confirm() {
           </Animated.View>
         </>
       ) : null}
-      {intent === 'buy' ? (
+      {plan.kind === 'buy' ? (
         <>
           <Animated.View entering={stagger(0)}>
             <Tag>Conditional buy</Tag>
           </Animated.View>
           <Animated.View entering={stagger(1)}>
             <Txt style={{ marginTop: 14 }} v="h">
-              Buy $20 of JUP when it falls to $0.85
+              {`Buy $${plan.amountUsd} of ${plan.symbol} when it ${moves(plan.direction)} to ${formatUsd(plan.targetUsd)}`}
             </Txt>
             <Txt style={{ fontSize: 15, marginTop: 10 }} v="sub">
-              Cue watches the price and buys for you, even when the app is closed.
+              {shouldFireTrigger(plan.direction, plan.priceUsd, plan.targetUsd)
+                ? `${plan.symbol} is already ${plan.direction} that, so Cue will buy on its next price check.`
+                : 'Cue watches the price and buys for you, even when the app is closed.'}
             </Txt>
           </Animated.View>
           <Animated.View entering={stagger(3)} style={{ marginTop: 14 }}>
             <Rows>
-              <KV label="Trigger" value={num('JUP below $0.85')} />
-              <KV label="Spend" value={num('$20.00 USDC')} />
-              <KV label="Expires" value={val('Tomorrow, 9:00 AM')} />
+              <KV label="Trigger" value={num(`${plan.symbol} ${plan.direction} ${formatUsd(plan.targetUsd)}`)} />
+              <KV label="Price now" value={num(formatUsd(plan.priceUsd))} />
+              <KV label="Spend" value={num(`$${plan.amountUsd} ≈ ${wsol(plan.amountLamports)}`)} />
+              <KV label="Expires" value={val(when(plan.expiresAt))} />
               <KV label="Permission" last value={val('Needs approval')} />
             </Rows>
           </Animated.View>
         </>
       ) : null}
-      {intent === 'guard' ? (
+      {plan.kind === 'guard' ? (
         <>
           <Animated.View entering={stagger(0)}>
             <Tag>Portfolio guard</Tag>
           </Animated.View>
           <Animated.View entering={stagger(1)}>
             <Txt style={{ marginTop: 14 }} v="h">
-              Watch for a 10% drop in 24 hours
+              {`Watch for a ${plan.thresholdPct}% drop in ${plan.timeframe === '1h' ? 'an hour' : '24 hours'}`}
             </Txt>
             <Txt style={{ fontSize: 15, marginTop: 10 }} v="sub">
               Choose what Cue does if it happens.
@@ -336,53 +415,247 @@ function Confirm() {
           </Animated.View>
           <Animated.View entering={stagger(2)}>
             <Segment
-              onChange={(i) => flow.setGuardMode(i as 0 | 1)}
+              onChange={(i) => flow.setGuardAction(i ? 'pause_activity' : 'alert_only')}
               options={['Alert me', 'Pause activity']}
               style={{ marginTop: 20 }}
-              value={guardMode}
+              value={plan.action === 'pause_activity' ? 1 : 0}
             />
             <Txt style={{ marginHorizontal: 6, marginTop: 14 }} v="k">
-              {guardMode
-                ? 'Sends a notification and stops all rules until you resume them.'
+              {plan.action === 'pause_activity'
+                ? 'Sends a notification and stops all your buy rules.'
                 : 'Sends a notification. Nothing else changes.'}
             </Txt>
+          </Animated.View>
+          <Animated.View entering={stagger(3)} style={{ marginTop: 14 }}>
+            <Rows>
+              <KV label="Watching" value={val('Your SOL, in dollars')} />
+              <KV label="SOL now" value={num(formatUsd(plan.baselineUsd))} />
+              <KV
+                label="Fires at"
+                last
+                value={num(`${formatUsd(plan.baselineUsd * (1 - plan.thresholdPct / 100))} or lower`)}
+              />
+            </Rows>
           </Animated.View>
         </>
       ) : null}
       <View style={{ flex: 1 }} />
       <Animated.View entering={stagger(5)} style={{ gap: 12, paddingTop: 18 }}>
         {error ? <Txt v="k">{error}</Txt> : null}
-        {intent === 'buy' ? (
-          <CueButton label="Review permission" onPress={flow.review} />
-        ) : (
+        {plan.kind === 'buy' ? <CueButton label="Review permission" onPress={flow.review} /> : null}
+        {plan.kind === 'guard' ? <CueButton label="Turn on guard" onPress={turnOnGuard} /> : null}
+        {plan.kind === 'send' ? (
           <CueButton
-            label={intent === 'guard' ? 'Turn on guard' : 'Confirm and sign'}
-            loading={intent === 'send' ? sendSol.isPending : busy}
+            label="Confirm and sign"
+            loading={sendSol.isPending}
             loadingLabel="Waiting for your wallet"
-            onPress={intent === 'send' ? sign : () => run(flow.signed)}
+            onPress={sign}
           />
-        )}
-        <CueButton label="Cancel" onPress={flow.cancel} variant="glass" />
+        ) : null}
+        <View style={{ flexDirection: 'row', gap: 12 }}>
+          <View style={{ flex: 1 }}>
+            <CueButton label="Edit details" onPress={flow.edit} variant="glass" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <CueButton label="Cancel" onPress={flow.cancel} variant="glass" />
+          </View>
+        </View>
       </Animated.View>
     </Sheet>
   )
 }
 
 function NotSupported() {
-  const { parsed, text } = useStore($flow)
-  const reason = parsed.intent === 'unsupported' ? parsed.reason : ''
+  const { draft, plan, text } = useStore($flow)
   return (
     <Sheet>
-      <Txt v="k">You said</Txt>
-      <Txt style={{ marginTop: 6 }} v="h">
-        {text}
-      </Txt>
+      {text ? (
+        <>
+          <Txt v="k">You said</Txt>
+          <Txt style={{ marginTop: 6 }} v="h">
+            {text}
+          </Txt>
+        </>
+      ) : null}
       <Txt style={{ marginTop: 10 }} v="sub">
-        {`${reason || "I can't do that yet."} Cue can send SOL, buy on a price trigger, and guard your portfolio.`}
+        {`${plan.kind === 'nope' && plan.reason ? plan.reason : "I can't do that yet."} Cue can send SOL, buy on a price trigger, and guard your portfolio.`}
       </Txt>
       <View style={{ gap: 12, paddingTop: 18 }}>
         <CueButton label="Try again" onPress={flow.retry} />
+        {draft ? <CueButton label="Edit details" onPress={flow.edit} variant="glass" /> : null}
         <CueButton label="Close" onPress={flow.cancel} variant="glass" />
+      </View>
+    </Sheet>
+  )
+}
+
+/* ---------- manual entry: builds the same Intent the parser would ---------- */
+
+function Field({ label, ...input }: TextInputProps & { label: string }) {
+  const c = useCue()
+  return (
+    <View style={{ gap: 6, marginTop: 16 }}>
+      <Txt v="k">{label}</Txt>
+      <TextInput
+        placeholderTextColor={c.muted}
+        style={{
+          backgroundColor: c.sep,
+          borderRadius: 14,
+          color: c.text,
+          fontSize: 17,
+          paddingHorizontal: 14,
+          paddingVertical: 12,
+        }}
+        {...input}
+      />
+    </View>
+  )
+}
+
+function Pill({ label, on, onPress }: { label: string; on: boolean; onPress: () => void }) {
+  const c = useCue()
+  return (
+    <Press label={label} onPress={onPress}>
+      <View style={{ backgroundColor: on ? c.accent : c.sep, borderRadius: 999, paddingHorizontal: 16, paddingVertical: 9 }}>
+        <Txt style={{ color: on ? c.onAccent : c.text, fontSize: 15, fontWeight: '500' }}>{label}</Txt>
+      </View>
+    </Press>
+  )
+}
+
+const KINDS: readonly ComposeKind[] = ['send', 'buy', 'guard']
+const toNumber = (s: string) => Number(s.trim().replace(',', '.'))
+
+function Compose() {
+  const { compose, draft, plan } = useStore($flow)
+  const { contacts } = useStore($cue)
+  const prices = useStore($prices)
+  // Opened via "Edit details": start from whatever was understood instead of a blank form.
+  const d: Partial<Draft> = draft ?? {}
+  const [kind, setKind] = useState<ComposeKind>(compose)
+  const [amount, setAmount] = useState(String((d.intent === 'instant_send' ? d.amount : d.amount_usd) ?? ''))
+  const [to, setTo] = useState(
+    d.intent === 'instant_send' && plan.kind === 'send'
+      ? plan.recipientName
+      : (d.recipient ?? contacts[0]?.name ?? ''),
+  )
+  const [symbol, setSymbol] = useState<Symbol>(d.token === 'SOL' ? 'SOL' : 'JUP')
+  const [direction, setDirection] = useState<TriggerDirection>(d.condition ?? 'below')
+  const [price, setPrice] = useState(String(d.threshold_usd ?? ''))
+  const [pct, setPct] = useState(String(d.threshold_pct ?? 10))
+  const [timeframe, setTimeframe] = useState<'1h' | '24h'>(d.timeframe ?? '24h')
+  const [action, setAction] = useState<GuardAction>(d.action ?? 'alert_only')
+  const [error, setError] = useState<string | null>(null)
+
+  function submit() {
+    setError(null)
+    if (kind === 'send') {
+      const sol = toNumber(amount)
+      if (!(sol > 0)) return setError('Enter how much SOL to send.')
+      if (!to.trim()) return setError('Pick a contact or paste an address.')
+      flow.submitIntent(
+        { amount: sol, intent: 'instant_send', recipient: to.trim(), token: 'SOL' },
+        `Send ${sol} SOL to ${to.trim()}`,
+      )
+    } else if (kind === 'buy') {
+      const usd = toNumber(amount)
+      const target = toNumber(price)
+      if (!(usd > 0)) return setError('Enter how many dollars to spend.')
+      if (!(target > 0)) return setError('Enter the price that should trigger the buy.')
+      flow.submitIntent(
+        { amount_usd: usd, condition: direction, intent: 'conditional_buy', threshold_usd: target, token: symbol },
+        `Buy $${usd} of ${symbol} ${direction} $${target}`,
+      )
+    } else {
+      const drop = toNumber(pct)
+      if (!(drop > 0 && drop < 100)) return setError('Enter a drop between 1% and 99%.')
+      flow.submitIntent(
+        { action, intent: 'portfolio_guard', threshold_pct: drop, timeframe },
+        `${action === 'pause_activity' ? 'Pause everything' : 'Alert me'} if my portfolio drops ${drop}% ${timeframe === '1h' ? 'in an hour' : 'today'}`,
+      )
+    }
+  }
+
+  return (
+    <Sheet top={104}>
+      <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} style={{ flexGrow: 0 }}>
+        <Txt v="h">Do it yourself</Txt>
+        <Segment
+          onChange={(i) => {
+            setKind(KINDS[i])
+            setError(null)
+          }}
+          options={['Send', 'Buy', 'Guard']}
+          style={{ marginTop: 16 }}
+          value={KINDS.indexOf(kind)}
+        />
+        {kind === 'send' ? (
+          <>
+            <Field keyboardType="decimal-pad" label="Amount (SOL)" onChangeText={setAmount} placeholder="0.1" value={amount} />
+            <View style={{ gap: 6, marginTop: 16 }}>
+              <Txt v="k">To</Txt>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                {contacts.map((ct) => (
+                  <Pill key={ct.address} label={ct.name} on={to === ct.name} onPress={() => setTo(ct.name)} />
+                ))}
+              </View>
+            </View>
+            <Field
+              autoCapitalize="none"
+              autoCorrect={false}
+              label="Or paste an address"
+              onChangeText={setTo}
+              placeholder="Wallet address"
+              value={contacts.some((ct) => ct.name === to) ? '' : to}
+            />
+          </>
+        ) : null}
+        {kind === 'buy' ? (
+          <>
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: 16 }}>
+              {(['JUP', 'SOL'] as const).map((s) => (
+                <Pill key={s} label={s} on={symbol === s} onPress={() => setSymbol(s)} />
+              ))}
+            </View>
+            <Field keyboardType="decimal-pad" label="Spend (USD)" onChangeText={setAmount} placeholder="5" value={amount} />
+            <Segment
+              onChange={(i) => setDirection(i ? 'above' : 'below')}
+              options={['When it falls to', 'When it rises to']}
+              style={{ marginTop: 16 }}
+              value={direction === 'above' ? 1 : 0}
+            />
+            <Field
+              keyboardType="decimal-pad"
+              label={`Price (USD)${prices[symbol] ? ` · now ${formatUsd(prices[symbol]!.usd)}` : ''}`}
+              onChangeText={setPrice}
+              placeholder="0.30"
+              value={price}
+            />
+          </>
+        ) : null}
+        {kind === 'guard' ? (
+          <>
+            <Field keyboardType="decimal-pad" label="Alert when my portfolio drops (%)" onChangeText={setPct} value={pct} />
+            <Segment
+              onChange={(i) => setTimeframe(i ? '24h' : '1h')}
+              options={['Within 1 hour', 'Within 24 hours']}
+              style={{ marginTop: 16 }}
+              value={timeframe === '24h' ? 1 : 0}
+            />
+            <Segment
+              onChange={(i) => setAction(i ? 'pause_activity' : 'alert_only')}
+              options={['Alert me', 'Pause activity']}
+              style={{ marginTop: 12 }}
+              value={action === 'pause_activity' ? 1 : 0}
+            />
+          </>
+        ) : null}
+      </ScrollView>
+      <View style={{ flex: 1 }} />
+      <View style={{ gap: 12, paddingTop: 18 }}>
+        {error ? <Txt v="k">{error}</Txt> : null}
+        <CueButton label="Continue" onPress={submit} />
+        <CueButton label="Cancel" onPress={flow.cancel} variant="glass" />
       </View>
     </Sheet>
   )
@@ -393,45 +666,43 @@ function NotSupported() {
 function Delegate() {
   const c = useCue()
   const insets = useSafeAreaInsets()
+  const { plan } = useStore($flow)
   const { account } = useMobileWallet()
   const { client, cluster } = useAppCluster()
-  const queryClient = useQueryClient()
+  const refreshWallet = useRefreshWallet()
   const [error, setError] = useState<string | null>(null)
+  const buy = plan.kind === 'buy' ? plan : null
+  // approve() replaces the previous allowance, so it has to cover this rule plus every buy rule still waiting.
+  const [others] = useState(activeBuyLamports)
+  const total = others + (buy?.amountLamports ?? 0n)
 
   const grantDelegation = useMutation({
     mutationFn: () =>
       executeDelegationGrant({
         account: account!,
+        approveAmountLamports: total,
         chain: cluster.id,
         client,
         identity,
+        wrapAmountLamports: buy!.amountLamports,
       }),
-    onSuccess: async (result) => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['get-balance'] }),
-        queryClient.invalidateQueries({ queryKey: ['get-transaction-signatures'] }),
-      ])
-      flow.signed(result.signature, {
-        delegateAddress: result.delegateAddress,
-        tokenAccount: result.ownerAta,
-      })
-    },
+    onSuccess: refreshWallet,
   })
 
   async function approve() {
-    if (!account) {
-      setError('Please connect your wallet first.')
-      return
-    }
-    if (grantDelegation.isPending) return
+    if (!account || !buy || grantDelegation.isPending) return
     setError(null)
     try {
-      await grantDelegation.mutateAsync()
+      const result = await grantDelegation.mutateAsync()
+      activateBuy(account.address, result.signature, total)
+      flow.signed(result.signature)
     } catch (e) {
       const sig = (e as { signature?: string })?.signature
       setError(sig ? `${formatError(e)}\n\nSignature: ${sig}` : formatError(e))
     }
   }
+
+  if (!buy) return null
 
   return (
     <Animated.View
@@ -450,7 +721,7 @@ function Delegate() {
         </Animated.View>
         <Animated.View entering={stagger(1)}>
           <Txt style={{ marginBottom: 0, marginLeft: 4, marginTop: 22 }} v="large">
-            Let Cue buy JUP for you
+            {`Let Cue buy ${buy.symbol} for you`}
           </Txt>
           <Txt style={{ marginBottom: 22, marginHorizontal: 4, marginTop: 10 }} v="sub">
             You approve once. Cue then acts on its own, up to this limit.
@@ -458,14 +729,14 @@ function Delegate() {
         </Animated.View>
         <Animated.View entering={stagger(3)}>
           <Rows>
-            <KV label="Hard limit, on-chain" value={num('0.05 WSOL')} />
-            <KV label="Cue will use it for" value={val('Buying JUP')} />
+            <KV label="Set aside now" value={num(wsol(buy.amountLamports))} />
+            <KV label="Hard limit, on-chain" value={num(wsol(total))} />
+            <KV label="Cue will use it for" value={val(`Buying ${buy.symbol}`)} />
             <KV label="Session gas funded" value={num('0.01 SOL')} />
             <KV label="Stays valid until" last value={val('You revoke it')} />
           </Rows>
           <Txt style={{ marginHorizontal: 8, marginTop: 16 }} v="k">
-            Solana itself enforces the 0.05 WSOL limit. Cue funds a secure session key with 0.01 SOL for gas. Revoke any
-            time from Settings.
+            {`Solana itself enforces the ${wsol(total)} limit${others > 0n ? ', which also covers your other active buy rules' : ''}. Revoke any time from Settings.`}
           </Txt>
         </Animated.View>
         <View style={{ flex: 1 }} />
@@ -518,28 +789,27 @@ function Tick() {
 function Success() {
   const c = useCue()
   const insets = useSafeAreaInsets()
-  const { guardMode, intent, parsed, recipient, signature } = useStore($flow)
+  const { plan, signature } = useStore($flow)
   const { cluster } = useAppCluster()
   const explorerUrl = signature
     ? getExplorerUrl({ network: { id: cluster.id, url: cluster.url }, path: `/tx/${signature}`, provider: 'solana' })
     : null
-  const sent = parsed.intent === 'instant_send' ? parsed : null
-  const copy = {
-    buy: ['Rule is live', 'Cue will buy $20 of JUP if it falls to $0.85. Expires tomorrow, 9:00 AM.'],
-    guard: [
-      'Guard is on',
-      guardMode
-        ? 'If your portfolio drops 10% in 24 hours, Cue pauses all rules and tells you.'
-        : 'If your portfolio drops 10% in 24 hours, you get an alert.',
-    ],
-    nope: ['', ''],
-    send: [
-      sent
-        ? `Sent ${sent.amount} ${sent.token} to ${recipient && sent.recipient === recipient ? shortAddr(recipient) : sent.recipient}`
-        : 'Sent',
-      'Confirmed on Solana.',
-    ],
-  }[intent]
+  const [title, body] =
+    plan.kind === 'send'
+      ? [`Sent ${plan.amount} SOL to ${plan.recipientName}`, 'Confirmed on Solana.']
+      : plan.kind === 'buy'
+        ? [
+            'Rule is live',
+            `Cue will buy $${plan.amountUsd} of ${plan.symbol} if it ${moves(plan.direction)} to ${formatUsd(plan.targetUsd)}. Expires ${when(plan.expiresAt)}.`,
+          ]
+        : plan.kind === 'guard'
+          ? [
+              'Guard is on',
+              `If your portfolio drops ${plan.thresholdPct}% within ${plan.timeframe === '1h' ? 'an hour' : '24 hours'}, ${
+                plan.action === 'pause_activity' ? 'Cue pauses your buy rules and tells you.' : 'you get an alert.'
+              }`,
+            ]
+          : ['', '']
   return (
     <Animated.View
       entering={ZoomIn.duration(420).easing(ease)}
@@ -553,12 +823,12 @@ function Success() {
         <Tick />
         <Animated.View entering={stagger(2)} style={{ alignItems: 'center', marginTop: 28 }}>
           <Txt style={{ textAlign: 'center' }} v="h">
-            {copy[0]}
+            {title}
           </Txt>
           <Txt style={{ marginTop: 10, textAlign: 'center' }} v="sub">
-            {copy[1]}
+            {body}
           </Txt>
-          {intent === 'send' && signature ? (
+          {signature ? (
             <Txt style={{ marginTop: 2, textAlign: 'center' }} v="sub">
               <Txt v="mono">{shortAddr(signature)}</Txt>
             </Txt>

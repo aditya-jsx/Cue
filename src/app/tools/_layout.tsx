@@ -55,34 +55,6 @@ export default function ToolsLayout() {
           title: 'Autonomous action',
         }}
       />
-      <Stack.Screen
-        name="conditional-buy"
-        options={{
-          headerTitle: () => (
-            <ShellUiHeaderTitle
-              foregroundColor={foregroundColor}
-              icon="trending-up-outline"
-              tintColor={tintColor}
-              title="Conditional Buy"
-            />
-          ),
-          title: 'Conditional Buy',
-        }}
-      />
-      <Stack.Screen
-        name="portfolio-guard"
-        options={{
-          headerTitle: () => (
-            <ShellUiHeaderTitle
-              foregroundColor={foregroundColor}
-              icon="shield-checkmark-outline"
-              tintColor={tintColor}
-              title="Portfolio Guard"
-            />
-          ),
-          title: 'Portfolio Guard',
-        }}
-      />
     </Stack>
   )
 }
