@@ -19,7 +19,7 @@ export default function Layout() {
     startPriceEngine().catch((e) => console.warn('[CuePriceEngine] start failed', e))
     startWakeWord().catch((e) => console.warn('[CueWakeWord] start failed', e))
 
-    const subscription = CueNative.addListener('onWakeWordDetected', () => flow.startLiveListening())
+    const subscription = CueNative.addListener('onWakeWordDetected', () => flow.startLiveListening('wake'))
     return () => subscription.remove()
   }, [])
 

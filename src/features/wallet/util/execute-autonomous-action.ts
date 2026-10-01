@@ -10,8 +10,7 @@ import {
 } from '@solana/kit'
 
 import { getSessionKey } from '@/features/cue/data-access/session-key'
-import { confirmSignature } from '@/features/wallet/util/confirm-signature'
-import { sendSignedTransaction } from '@/features/wallet/util/send-signed-transaction'
+import { sendAndConfirm } from '@/features/wallet/util/send-signed-transaction'
 import {
   findAtaAddress,
   getCreateAssociatedTokenAccountIdempotentInstruction,
@@ -72,13 +71,11 @@ export async function executeAutonomousAction({
   )
 
   const signed = await partiallySignTransactionWithSigners([sessionKey], compileTransaction(message))
-  const signature = await sendSignedTransaction(client, signed)
-
-  try {
-    await confirmSignature({ lastValidBlockHeight: latestBlockhash.lastValidBlockHeight, rpc: client.rpc, signature })
-  } catch (error) {
-    throw Object.assign(error instanceof Error ? error : new Error(String(error)), { signature })
-  }
+  const signature = await sendAndConfirm({
+    client,
+    lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
+    transaction: signed,
+  })
 
   return { destinationAta, signature, sourceAta }
 }

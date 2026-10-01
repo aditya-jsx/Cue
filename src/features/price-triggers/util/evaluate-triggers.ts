@@ -47,7 +47,7 @@ async function evaluateBuy(client: SolanaClient, trigger: BuyTrigger, point: Pri
     markTriggerFired(trigger.id, result.signature)
     pushLogEntry({
       amount: spent,
-      detail: `Just now — ${trigger.symbol} hit ${formatUsd(point.usd)}`,
+      detail: `${trigger.symbol} hit ${formatUsd(point.usd)}`,
       signature: result.signature,
       status: 'Confirmed',
       title: `Bought: ${title}`,
@@ -56,7 +56,7 @@ async function evaluateBuy(client: SolanaClient, trigger: BuyTrigger, point: Pri
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     markTriggerFailed(trigger.id, message)
-    pushLogEntry({ amount: '—', detail: `Just now — ${message}`, status: 'Alert', title: `Couldn't buy: ${title}` })
+    pushLogEntry({ amount: '—', detail: message, status: 'Alert', title: `Couldn't buy: ${title}` })
     CueNative.notify("Cue couldn't complete a buy", message)
   }
 }
@@ -78,6 +78,6 @@ function evaluateGuard(trigger: GuardTrigger, sol: PricePoint | undefined) {
   const detail = `SOL fell ${dropPct.toFixed(1)}% to ${formatUsd(sol.usd)}${
     trigger.action === 'pause_activity' ? ` — paused ${paused} buy rule${paused === 1 ? '' : 's'}` : ''
   }`
-  pushLogEntry({ amount: `-${dropPct.toFixed(1)}%`, detail: `Just now — ${detail}`, status: 'Alert', title: 'Guard triggered' })
+  pushLogEntry({ amount: `-${dropPct.toFixed(1)}%`, detail, status: 'Alert', title: 'Guard triggered' })
   CueNative.notify('Portfolio Guard triggered', detail)
 }

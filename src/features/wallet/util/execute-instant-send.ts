@@ -10,6 +10,7 @@ import {
   getBase64Decoder,
   getCompiledTransactionMessageEncoder,
   isAddress,
+  type Blockhash,
   type Lamports,
   pipe,
   setTransactionMessageComputeUnitLimit,
@@ -19,9 +20,8 @@ import {
   type TransactionMessageBytesBase64,
 } from '@solana/kit'
 
-import { confirmSignature } from '@/features/wallet/util/confirm-signature'
 import { getTransferSolInstruction } from '@/features/wallet/util/get-transfer-sol-instruction'
-import { sendSignedTransaction } from '@/features/wallet/util/send-signed-transaction'
+import { sendAndConfirm } from '@/features/wallet/util/send-signed-transaction'
 
 export interface ExecuteInstantSendOptions {
   account: Account
@@ -99,12 +99,15 @@ export async function executeInstantSend({
     )
   }
 
-  // Fetch fresh blockhash immediately before wallet interaction to avoid keeping the MWA session waiting
-  const { value: freshBlockhash } = await client.rpc.getLatestBlockhash({ commitment: 'confirmed' }).send()
+  // The blockhash is fetched only once Phantom is open and authorized: a devnet blockhash expires in ~35s, and the
+  // approval itself takes most of that, so none of it can be spent on launching the wallet first.
+  let freshBlockhash!: Readonly<{ blockhash: Blockhash; lastValidBlockHeight: bigint }>
 
   // Connect & sign with Phantom in a single session
   const signedTx = await transact(async (wallet) => {
     await wallet.authorize({ chain, identity })
+    const { value } = await client.rpc.getLatestBlockhash({ commitment: 'confirmed' }).send()
+    freshBlockhash = value
 
     const message = pipe(
       createTransactionMessage({ version: 0 }),
@@ -129,18 +132,5 @@ export async function executeInstantSend({
   })
 
   // Broadcast via Cue's own RPC endpoint (bypassing Phantom's congested devnet proxy)
-  const signature = await sendSignedTransaction(client, signedTx)
-
-  try {
-    await confirmSignature({
-      lastValidBlockHeight: freshBlockhash.lastValidBlockHeight,
-      rpc: client.rpc,
-      signature,
-    })
-  } catch (error) {
-    // Keep the signature attached: it landed on the wire even if we can't confirm it, so it's still worth showing.
-    throw Object.assign(error instanceof Error ? error : new Error(String(error)), { signature })
-  }
-
-  return signature
+  return sendAndConfirm({ client, lastValidBlockHeight: freshBlockhash.lastValidBlockHeight, transaction: signedTx })
 }

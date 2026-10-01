@@ -17,7 +17,7 @@ import { useQueryClient } from '@tanstack/react-query'
 
 import { useAppCluster } from '@/features/cluster/data-access/cluster-provider'
 import { identity } from '@/features/core/data-access/app-providers'
-import { $cue, actions, pushLogEntry, shortAddr } from '@/features/cue/data-access/cue-store'
+import { $cue, actions, flow, pushLogEntry, removeContact, shortAddr } from '@/features/cue/data-access/cue-store'
 import {
   $delegatedLamports,
   $triggers,
@@ -60,7 +60,7 @@ function RevokeButton() {
       const stopped = stopBuyTriggers('Permission revoked')
       pushLogEntry({
         amount: '—',
-        detail: `Just now${stopped ? ` — stopped ${stopped} buy rule${stopped === 1 ? '' : 's'}` : ''}`,
+        detail: `${stopped ? `Stopped ${stopped} buy rule${stopped === 1 ? '' : 's'}. ` : ''}Wrapped SOL returned to your wallet`,
         signature,
         status: 'Confirmed',
         title: 'Permission revoked',
@@ -142,6 +142,7 @@ function LinkRow({ href, label }: { href: '/settings/cluster' | '/tools'; label:
 }
 
 export function CueSettings() {
+  const c = useCue()
   const insets = useSafeAreaInsets()
   const { activeTheme } = useTheme()
   const { contacts, wake } = useStore($cue)
@@ -197,9 +198,27 @@ export function CueSettings() {
           <SectionLabel>Contacts</SectionLabel>
           <Rows>
             {contacts.map((p) => (
-              <Row key={p.name} right={<Txt v="mono">{shortAddr(p.address)}</Txt>} title={p.name} />
+              <Row
+                key={p.address}
+                right={
+                  <View style={{ alignItems: 'center', flexDirection: 'row', gap: 12 }}>
+                    <Txt v="mono">{shortAddr(p.address)}</Txt>
+                    <Press label={`Remove ${p.name}`} onPress={() => removeContact(p.address)}>
+                      <Ionicons color={c.muted} name="close-circle" size={22} />
+                    </Press>
+                  </View>
+                }
+                title={p.name}
+              />
             ))}
-            <Row last title={<Txt style={{ fontWeight: '500' }}>Add contact</Txt>} />
+            {contacts.length === 0 ? (
+              <Txt style={{ fontSize: 15, paddingVertical: 18, textAlign: 'center' }} v="sub">
+                No contacts yet. Add one to send by name.
+              </Txt>
+            ) : null}
+            <Pressable accessibilityRole="button" onPress={flow.openContact}>
+              <Row last title={<Txt style={{ fontWeight: '500' }}>Add contact</Txt>} />
+            </Pressable>
           </Rows>
         </Animated.View>
 

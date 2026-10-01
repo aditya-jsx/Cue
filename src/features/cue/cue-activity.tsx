@@ -10,6 +10,18 @@ import { $cue } from '@/features/cue/data-access/cue-store'
 import { useCue } from '@/features/cue/cue-theme'
 import { CuePage, Row, Rows, Txt } from '@/features/cue/ui/cue-ui'
 
+function timeAgo(at: number | undefined): string {
+  if (!at) return 'Earlier'
+  const minutes = Math.floor((Date.now() - at) / 60_000)
+  if (minutes < 1) return 'Just now'
+  if (minutes < 60) return `${minutes}m ago`
+  if (minutes < 24 * 60) return `${Math.floor(minutes / 60)}h ago`
+  return new Date(at).toLocaleDateString([], { day: 'numeric', month: 'short' })
+}
+
+// Entries saved before timestamps existed baked a stale "Just now" into their text.
+const legacyDetail = (detail: string) => detail.replace(/^Just now(, | — )?/, '')
+
 export function CueActivity() {
   const c = useCue()
   const insets = useSafeAreaInsets()
@@ -41,7 +53,7 @@ export function CueActivity() {
                   onPress={() => l.signature && open(l.signature)}
                 >
                   <Row
-                    detail={l.detail}
+                    detail={[timeAgo(l.at), l.at ? l.detail : legacyDetail(l.detail)].filter(Boolean).join(' · ')}
                     last={i === log.length - 1}
                     right={<Txt v="num">{l.amount}</Txt>}
                     rightSub={

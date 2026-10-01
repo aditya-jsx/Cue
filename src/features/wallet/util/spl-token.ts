@@ -86,13 +86,24 @@ export function getApproveInstruction({
   }
 }
 
-export function getRevokeInstruction({ owner, source }: { owner: Address; source: Address }): Instruction {
+/** Closes a token account, sending its lamports to `destination`. A wrapped-SOL account can be closed while it still
+ * holds a balance, which is how wrapped SOL is turned back into SOL. Closing also removes any delegate. */
+export function getCloseAccountInstruction({
+  destination,
+  owner,
+  source,
+}: {
+  destination: Address
+  owner: Address
+  source: Address
+}): Instruction {
   return {
     accounts: [
       { address: source, role: AccountRole.WRITABLE },
+      { address: destination, role: AccountRole.WRITABLE },
       { address: owner, role: AccountRole.READONLY_SIGNER },
     ],
-    data: new Uint8Array([5]), // Revoke instruction index = 5
+    data: new Uint8Array([9]), // CloseAccount instruction index = 9
     programAddress: TOKEN_PROGRAM_ADDRESS,
   }
 }

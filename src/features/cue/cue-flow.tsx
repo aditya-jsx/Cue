@@ -33,6 +33,7 @@ import {
   $flow,
   activateBuy,
   activateGuard,
+  addContact,
   type ComposeKind,
   flow,
   recordSend,
@@ -68,7 +69,8 @@ export function CueFlow() {
   const has = (s: Screen) => stack.includes(s)
   return (
     <View pointerEvents={stack.length ? 'auto' : 'none'} style={StyleSheet.absoluteFill}>
-      {has('compose') ? <Compose key="compose" /> : null}
+      {has('compose') && !has('confirm') && !has('nope') ? <Compose key="compose" /> : null}
+      {has('contact') ? <AddContact key="contact" /> : null}
       {has('listen') ? <Listening key="listen" /> : null}
       {has('confirm') ? <Confirm key="confirm" /> : null}
       {has('nope') ? <NotSupported key="nope" /> : null}
@@ -156,7 +158,17 @@ function Listening() {
         if (!cancelled) flow.setTranscript(text)
       }),
       CueNative.addListener('onSpeechResult', ({ text }) => finish(text)),
-      CueNative.addListener('onSpeechError', () => finish('')),
+      CueNative.addListener('onSpeechError', ({ message }) => {
+        // 6 = heard nothing at all, 7 = heard something it couldn't transcribe. Nothing said (or a wake-word false
+        // alarm) isn't worth an error sheet; a garbled attempt after tapping the mic is.
+        const code = Number(/\((\d+)\)/.exec(message)?.[1])
+        if (!cancelled && (code === 6 || (code === 7 && $flow.get().source === 'wake'))) {
+          resumeWakeWord()
+          flow.cancel()
+          return
+        }
+        finish('')
+      }),
     ]
     return () => {
       cancelled = true
@@ -655,6 +667,45 @@ function Compose() {
       <View style={{ gap: 12, paddingTop: 18 }}>
         {error ? <Txt v="k">{error}</Txt> : null}
         <CueButton label="Continue" onPress={submit} />
+        <CueButton label="Cancel" onPress={flow.cancel} variant="glass" />
+      </View>
+    </Sheet>
+  )
+}
+
+function AddContact() {
+  const [name, setName] = useState('')
+  const [address, setAddress] = useState('')
+  const [error, setError] = useState<string | null>(null)
+
+  function save() {
+    const problem = addContact(name, address)
+    if (problem) setError(problem)
+    else flow.cancel()
+  }
+
+  return (
+    <Sheet top={104}>
+      <Txt v="h">Add contact</Txt>
+      <Field autoCapitalize="words" label="Name" onChangeText={setName} placeholder="Alex" value={name} />
+      <Field
+        autoCapitalize="none"
+        autoCorrect={false}
+        label="Wallet address"
+        onChangeText={(v) => {
+          setAddress(v)
+          setError(null)
+        }}
+        placeholder="Solana address"
+        value={address}
+      />
+      <Txt style={{ marginHorizontal: 6, marginTop: 14 }} v="k">
+        Check the address carefully: a send to a wrong address cannot be undone.
+      </Txt>
+      <View style={{ flex: 1 }} />
+      <View style={{ gap: 12, paddingTop: 18 }}>
+        {error ? <Txt v="k">{error}</Txt> : null}
+        <CueButton label="Save contact" onPress={save} />
         <CueButton label="Cancel" onPress={flow.cancel} variant="glass" />
       </View>
     </Sheet>

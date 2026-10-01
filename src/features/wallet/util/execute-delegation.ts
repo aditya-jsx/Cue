@@ -19,14 +19,13 @@ import {
 } from '@solana/kit'
 
 import { clearSessionKey, getOrCreateSessionKey } from '@/features/cue/data-access/session-key'
-import { confirmSignature } from '@/features/wallet/util/confirm-signature'
 import { getTransferSolInstruction } from '@/features/wallet/util/get-transfer-sol-instruction'
-import { sendSignedTransaction } from '@/features/wallet/util/send-signed-transaction'
+import { sendAndConfirm } from '@/features/wallet/util/send-signed-transaction'
 import {
   findAtaAddress,
   getApproveInstruction,
   getCreateAssociatedTokenAccountIdempotentInstruction,
-  getRevokeInstruction,
+  getCloseAccountInstruction,
   getSyncNativeInstruction,
   NATIVE_MINT_ADDRESS,
 } from '@/features/wallet/util/spl-token'
@@ -225,17 +224,11 @@ export async function executeDelegationGrant({
     return signed
   })
 
-  const signature = await sendSignedTransaction(client, signedTx)
-
-  try {
-    await confirmSignature({
-      lastValidBlockHeight: freshBlockhash.lastValidBlockHeight,
-      rpc: client.rpc,
-      signature,
-    })
-  } catch (error) {
-    throw Object.assign(error instanceof Error ? error : new Error(String(error)), { signature })
-  }
+  const signature = await sendAndConfirm({
+    client,
+    lastValidBlockHeight: freshBlockhash.lastValidBlockHeight,
+    transaction: signedTx,
+  })
 
   return {
     delegateAddress: sessionKey.address,
@@ -245,9 +238,10 @@ export async function executeDelegationGrant({
 }
 
 /**
- * Revokes on-chain delegation permission via SPL Token revoke instruction:
+ * Revokes on-chain delegation permission by closing the user's WSOL account, which both removes the session key's
+ * allowance and returns every wrapped lamport to the wallet as plain SOL (a bare revoke() would leave it locked):
  * 1. Derives user's WSOL ATA.
- * 2. Emits revoke() instruction for the source ATA with user as owner authority.
+ * 2. Emits closeAccount() for it with the user as owner and as the refund destination.
  * 3. Signs via MWA and confirms on-chain.
  * 4. Clears local session key.
  */
@@ -273,7 +267,8 @@ export async function executeDelegationRevoke({
       (m) => setTransactionMessageComputeUnitPrice(1_000n, m),
       (m) =>
         appendTransactionMessageInstruction(
-          getRevokeInstruction({
+          getCloseAccountInstruction({
+            destination: account.address,
             owner: account.address,
             source: ownerAta,
           }),
@@ -286,17 +281,11 @@ export async function executeDelegationRevoke({
     return signed
   })
 
-  const signature = await sendSignedTransaction(client, signedTx)
-
-  try {
-    await confirmSignature({
-      lastValidBlockHeight: freshBlockhash.lastValidBlockHeight,
-      rpc: client.rpc,
-      signature,
-    })
-  } catch (error) {
-    throw Object.assign(error instanceof Error ? error : new Error(String(error)), { signature })
-  }
+  const signature = await sendAndConfirm({
+    client,
+    lastValidBlockHeight: freshBlockhash.lastValidBlockHeight,
+    transaction: signedTx,
+  })
 
   // Clear session key from local storage upon successful revoke
   await clearSessionKey()

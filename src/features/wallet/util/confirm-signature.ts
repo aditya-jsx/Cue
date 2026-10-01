@@ -5,6 +5,8 @@ export interface ConfirmSignatureOptions {
   lastValidBlockHeight?: bigint
   maxAttempts?: number
   pollIntervalMs?: number
+  // Re-sends the signed transaction while waiting; one send can be dropped by a busy or lagging node.
+  rebroadcast?: () => Promise<unknown>
   rpc: Rpc<GetBlockHeightApi & GetSignatureStatusesApi>
   signature: string
 }
@@ -13,6 +15,7 @@ export async function confirmSignature({
   lastValidBlockHeight,
   maxAttempts = 30,
   pollIntervalMs = 1500,
+  rebroadcast,
   rpc,
   signature,
 }: ConfirmSignatureOptions): Promise<string> {
@@ -44,6 +47,8 @@ export async function confirmSignature({
       // Catch transient RPC errors (e.g. 429 rate limit or network lag) and retry
       console.warn(`[confirmSignature] Transient RPC issue on attempt ${attempts}:`, errMsg)
     }
+
+    if (rebroadcast && attempts % 2 === 0 && !expired) await rebroadcast().catch(() => undefined)
 
     // Check block height only occasionally to prevent RPC rate limiting
     if (lastValidBlockHeight !== undefined && attempts % 4 === 0 && !expired) {

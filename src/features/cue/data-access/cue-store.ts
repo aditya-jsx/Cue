@@ -15,11 +15,12 @@ import {
 import { $prices, type Symbol } from '@/features/prices/data-access/price-store'
 import CueNative from '../../../../modules/cue-native'
 
-export type Screen = 'compose' | 'confirm' | 'delegate' | 'listen' | 'nope' | 'success'
+export type Screen = 'compose' | 'confirm' | 'contact' | 'delegate' | 'listen' | 'nope' | 'success'
 export type ComposeKind = 'buy' | 'guard' | 'send'
 
 export type LogEntry = {
   amount: string
+  at?: number // absent on entries from before timestamps were stored
   detail: string
   id: string
   signature?: string
@@ -60,6 +61,7 @@ const LOADING_PRICES = "I'm still loading live prices. Try again in a few second
 const storage = createMMKV({ id: APP_STORAGE_ID })
 const LOG_KEY = 'cue:activity-log'
 const WAKE_KEY = 'cue:wake-enabled'
+const CONTACTS_KEY = 'cue:contacts'
 
 function loadLog(): LogEntry[] {
   try {
@@ -69,27 +71,33 @@ function loadLog(): LogEntry[] {
   }
 }
 
+export type Contact = { address: string; name: string }
+
+function loadContacts(): Contact[] {
+  try {
+    return JSON.parse(storage.getString(CONTACTS_KEY) ?? '[]') as Contact[]
+  } catch {
+    return []
+  }
+}
+
 export const shortAddr = (a: string) => (a.length > 12 ? `${a.slice(0, 4)}…${a.slice(-4)}` : a)
 const newId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
 export const $cue = atom<{
-  contacts: { address: string; name: string }[]
+  contacts: Contact[]
   log: LogEntry[]
   wake: boolean
 }>({
-  // Throwaway devnet addresses (no keys kept). Replace Alex with a wallet you control to see funds arrive.
-  contacts: [
-    { address: 'BWGt3Yg3pKVLTJbaufw7xNzMesgsUAKTwVHRnsYg6bzv', name: 'Alex' },
-    { address: '9h3wCAQfwHobHRrh5uEgyBzMPsxcGEh8V5rq2sbCABrJ', name: 'Mira' },
-  ],
+  contacts: loadContacts(),
   log: loadLog(),
   wake: storage.getBoolean(WAKE_KEY) ?? true,
 })
 
 /** Prepends a real Activity entry — used by every execution path (voice, manual, and the background engine). */
-export function pushLogEntry(entry: Omit<LogEntry, 'id'>) {
+export function pushLogEntry(entry: Omit<LogEntry, 'at' | 'id'>) {
   const cue = $cue.get()
-  const log = [{ ...entry, id: newId() }, ...cue.log].slice(0, 100)
+  const log = [{ ...entry, at: Date.now(), id: newId() }, ...cue.log].slice(0, 100)
   storage.set(LOG_KEY, JSON.stringify(log))
   $cue.set({ ...cue, log })
 }
@@ -172,6 +180,7 @@ export const $flow = atom<{
   compose: ComposeKind
   draft: Draft | null // what was understood (even partly), so "Edit details" can pre-fill the form
   live: boolean // true when `text` is a real transcript streaming in, not a tapped suggestion
+  source: 'mic' | 'wake' // who opened listening: a wake-word hit may be a false alarm, so it fails quietly
   plan: Plan
   signature: string | null // set once a real transaction landed
   stack: Screen[]
@@ -181,6 +190,7 @@ export const $flow = atom<{
   draft: null,
   live: false,
   plan: nope(''),
+  source: 'mic',
   signature: null,
   stack: [],
   text: '',
@@ -221,6 +231,9 @@ export const flow = {
     const kind = draft && EDITABLE[draft.intent]
     if (kind) $flow.set({ ...$flow.get(), compose: kind, live: false, stack: ['compose'] })
   },
+  openContact() {
+    if (idle()) $flow.set({ ...$flow.get(), stack: ['contact'] })
+  },
   openCompose(kind: ComposeKind) {
     if (!idle()) return
     $flow.set({ ...$flow.get(), compose: kind, draft: null, live: false, stack: ['compose'] })
@@ -229,7 +242,7 @@ export const flow = {
   retry() {
     if ($flow.get().stack[0] === 'compose') return flow.back()
     flow.cancel()
-    flow.startLiveListening()
+    flow.startLiveListening('mic')
   },
   review: () => push('delegate'),
   setGuardAction(action: GuardAction) {
@@ -246,9 +259,9 @@ export const flow = {
     $flow.set({ ...$flow.get(), live: false, signature: null, stack: ['listen'], text })
   },
   /** Mic button or wake word. No-ops if a flow screen is already open, so a stray wake word can't interrupt it. */
-  startLiveListening() {
+  startLiveListening(source: 'mic' | 'wake' = 'mic') {
     if (!idle()) return
-    $flow.set({ ...$flow.get(), live: true, signature: null, stack: ['listen'], text: '' })
+    $flow.set({ ...$flow.get(), live: true, signature: null, source, stack: ['listen'], text: '' })
   },
   setTranscript: (text: string) => $flow.set({ ...$flow.get(), text }),
   /** Manual entry: the form builds the same Intent the parser would, and goes through the same gate. */
@@ -264,7 +277,7 @@ export function recordSend(signature: string) {
   if (plan.kind !== 'send') return
   pushLogEntry({
     amount: `${plan.amount} SOL`,
-    detail: 'Just now, by you',
+    detail: 'By you',
     signature,
     status: 'Confirmed',
     title: `Sent to ${plan.recipientName}`,
@@ -287,7 +300,7 @@ export function activateBuy(ownerAddress: string, signature: string, totalApprov
   setDelegatedLamports(totalApprovedLamports)
   pushLogEntry({
     amount: `$${plan.amountUsd}`,
-    detail: 'Just now — permission granted',
+    detail: 'Permission granted',
     signature,
     status: 'Confirmed',
     title: `Rule set: buy ${plan.symbol} ${plan.direction} ${formatUsd(plan.targetUsd)}`,
@@ -308,7 +321,7 @@ export function activateGuard(ownerAddress: string) {
   })
   pushLogEntry({
     amount: `-${plan.thresholdPct}%`,
-    detail: `Just now — watching from SOL ${formatUsd(plan.baselineUsd)}`,
+    detail: `Watching from SOL ${formatUsd(plan.baselineUsd)}`,
     status: 'Confirmed',
     title: plan.action === 'pause_activity' ? 'Guard on: pause' : 'Guard on: alert',
   })
@@ -319,6 +332,26 @@ export function activateGuard(ownerAddress: string) {
 /** Hands the mic back to the wake-word service, unless the user turned it off. */
 export function resumeWakeWord() {
   if ($cue.get().wake) CueNative.startWakeWordService()
+}
+
+/** Validates and saves a contact. Returns an error message, or null when saved. */
+export function addContact(rawName: string, rawAddress: string): string | null {
+  const name = rawName.trim().replace(/\s+/g, ' ')
+  const address = rawAddress.trim()
+  if (!name) return 'Give this contact a name.'
+  if (!isAddress(address)) return "That doesn't look like a Solana address."
+  const { contacts } = $cue.get()
+  if (contacts.some((c) => c.name.toLowerCase() === name.toLowerCase())) return `You already have a contact named ${name}.`
+  const next = [...contacts, { address, name }]
+  storage.set(CONTACTS_KEY, JSON.stringify(next))
+  $cue.set({ ...$cue.get(), contacts: next })
+  return null
+}
+
+export function removeContact(address: string) {
+  const next = $cue.get().contacts.filter((c) => c.address !== address)
+  storage.set(CONTACTS_KEY, JSON.stringify(next))
+  $cue.set({ ...$cue.get(), contacts: next })
 }
 
 export const actions = {
