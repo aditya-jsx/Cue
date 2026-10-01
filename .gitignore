@@ -48,3 +48,8 @@ app-example
 # local test keys (scripts/ itself is tracked)
 scripts/.test-owner-key.json
 
+
+# local agent tooling
+.claude/
+.agents/
+skills-lock.json
