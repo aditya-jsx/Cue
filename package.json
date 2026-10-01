@@ -15,8 +15,8 @@
     "start": "expo start",
     "web": "expo start --web"
   },
-  "displayName": "Cue example",
-  "description": "A Solana mobile app template with Expo, React Native, Solana Kit, Mobile Wallet Adapter actions, and Uniwind.",
+  "displayName": "Cue",
+  "description": "Cue: a voice-first AI wallet agent for Solana Mobile.",
   "usecase": "Mobile",
   "keywords": [
     "expo",

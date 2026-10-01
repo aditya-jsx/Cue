@@ -1,27 +1,32 @@
-# cue
+# Cue
 
-This is an [Expo](https://expo.dev) development-client app template for Solana Mobile wallets. It uses
-[@solana/kit](https://www.solanakit.com/) and [@wallet-ui/react-native-kit](https://wallet-ui.dev/) to connect to a
-mobile wallet, read account state, and run example wallet actions.
+Cue is a voice-first AI wallet agent for Solana Mobile (Seeker). Say what you want, Cue shows exactly what it
+understood, and nothing moves until you confirm it.
 
-## Technologies
+**Status:** hackathon build, **devnet only**. No mainnet funds are used.
 
-- [@solana/kit](https://www.solanakit.com/)
-- [@wallet-ui/react-native-kit](https://wallet-ui.dev/)
-- [Expo](https://expo.dev)
-- [HeroUI Native](https://heroui.com/docs/native)
-- [Uniwind](https://uniwind.dev/) (Tailwind CSS for React Native)
+## What it does
 
-## Included wallet flows
+- **Send:** "Send 0.1 SOL to Alex". Confirm, then sign once in your wallet.
+- **Conditional buy:** "Buy $5 of JUP if it drops to 30 cents". You grant a capped permission once. Cue then buys on
+  its own when the price is hit, even with the app closed. The cap is enforced on-chain and you can revoke it in
+  Settings. (On devnet the "buy" moves wrapped SOL to the session key. A real Jupiter swap is the mainnet step.)
+- **Portfolio Guard:** "Alert me if my portfolio drops 10% today" or "Pause everything if it drops 15% in an hour".
+- Every action also works manually from the **Do it yourself** tiles on Home.
+- **"Hey Cue"** wake word (on-device model) and a mic button.
 
-- Connect and disconnect a mobile wallet.
-- Read the connected account balance and recent activity for the selected cluster.
-- Sign a message with the connected account.
-- Sign a memo transaction.
-- Sign a Solana Sign-In payload.
-- Sign and submit a memo transaction after checking the connected account can pay the transaction fee.
+## How voice works
 
-## Get started
+1. The phone records the command (`modules/cue-native`, `AudioCapture.kt`) and sends the audio to the parser server.
+2. The server (`server/`, a Vercel function) asks Gemini to turn it into a structured intent and a transcript. The
+   Gemini key lives only on the server.
+3. The app validates the intent against hard rules (limits, known contacts, supported tokens) before showing it. The
+   model only parses; it never decides what is allowed.
+4. If the server is unreachable, Cue falls back to Android's speech recogniser and a local parser.
+
+## Setup
+
+Requires Node 20+, Android Studio / an Android device, and a Solana mobile wallet (e.g. Phantom) set to **devnet**.
 
 1. Install dependencies.
 
@@ -29,32 +34,47 @@ mobile wallet, read account state, and run example wallet actions.
    npm install
    ```
 
-2. Build and run the Android development client.
+2. Configure the app. Copy the env template and fill it in (see "Parser server" below).
+
+   ```bash
+   cp .env.example .env
+   ```
+
+3. Build and run the Android development client (Expo Go will not work: Cue uses native modules).
 
    ```bash
    npm run android
    ```
 
-This template depends on native modules and `expo-dev-client`, so use a development build instead of Expo Go.
+## Parser server
 
-You can start developing by editing the files inside the `src` directory. Expo Router routes live in `src/app`, and
-feature code lives in `src/features`.
+```bash
+cd server
+npm install
+vercel deploy --prod
+```
 
-## Wallet and network notes
+Set these in the Vercel project's environment variables:
 
-- Devnet and Testnet have default RPC URLs. Localhost and Mainnet are disabled until you add an RPC URL in
-  Settings > Cluster.
-- The app asks the selected mobile wallet to approve connection, message signing, sign-in, transaction signing, and
-  transaction submission requests.
-- The sign-and-send demo creates a Memo Program transaction with the text entered in the app. It checks the wallet
-  balance for the estimated fee before submitting.
+| Variable           | Purpose                                                                   |
+| ------------------ | ------------------------------------------------------------------------- |
+| `GEMINI_API_KEY`   | Google AI Studio key. The free tier has a small daily quota, fine for dev |
+| `CUE_CLIENT_TOKEN` | Same value as `EXPO_PUBLIC_CUE_CLIENT_TOKEN` in the app's `.env`          |
 
-## Learn more
+Then put the deployment URL in the app's `EXPO_PUBLIC_CUE_API_URL`.
 
-To learn more about developing your project with Expo, look at the following resources:
+## Checks
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Solana documentation](https://solana.com/docs): Learn how to build on Solana.
-- [Solana Kit documentation](https://www.solanakit.com/): Learn how to use the JavaScript SDK for Solana.
-- [Uniwind documentation](https://uniwind.dev/): Learn how to style your app with Tailwind CSS.
-- [Wallet UI documentation](https://wallet-ui.dev/): Learn how to build wallet-enabled Solana apps on web and mobile.
+```bash
+npm run build                      # typecheck + native prebuild
+node scripts/check-parse-intent.mjs  # parser and validation cases
+```
+
+## Project layout
+
+- `src/features/cue`: the Cue UI and flow (home, confirm, permission, settings, activity)
+- `src/features/price-triggers`: buy and guard rules and their evaluation
+- `src/features/wallet`: signing, sending and delegation transactions
+- `modules/cue-native`: Android module (wake word, audio capture, speech fallback, price-heartbeat service)
+- `server`: the intent-parsing function
+- `docs/brief.md`: product brief
