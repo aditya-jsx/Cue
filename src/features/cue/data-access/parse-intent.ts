@@ -45,24 +45,22 @@ const AMOUNT_HOMOPHONES: Record<string, string> = { ...NUMBER_WORDS, ate: '8', f
 
 /** Undoes the ways on-device speech recognition reliably mangles Cue's commands, before parsing. */
 export function normalizeTranscript(text: string): string {
-  return (
-    text
-      .replace(/\b(sold|sole|soul|saul)\b/gi, 'SOL')
-      .replace(/,(?!\d)/g, ' ') // "Send 2 SOL, to Alex"; keeps "1,000"
-      .replace(/[.!?]+\s*$/, '') // dictation auto-punctuates short utterances: "...to Alex."
-      .replace(/^(send|transfer)\s+([a-z]+)\b/i, (m, verb: string, w: string) => {
-        const digit = AMOUNT_HOMOPHONES[w.toLowerCase()]
-        return digit ? `${verb} ${digit}` : m
-      })
-      .replace(/\b([a-z]+)(\s+(?:dollars?|bucks|cents|percent|SOL)\b)/gi, (m, w: string, unit: string) => {
-        const digit = NUMBER_WORDS[w.toLowerCase()]
-        return digit ? `${digit}${unit}` : m
-      })
-      .replace(/\b(\d+(?:\.\d+)?)\s+(?:dollars?|bucks)\b/gi, '$$$1')
-      .replace(/\b(\d+(?:\.\d+)?)\s*percent\b/gi, '$1%')
-      .replace(/\s+/g, ' ')
-      .trim()
-  )
+  return text
+    .replace(/\b(sold|sole|soul|saul)\b/gi, 'SOL')
+    .replace(/,(?!\d)/g, ' ') // "Send 2 SOL, to Alex"; keeps "1,000"
+    .replace(/[.!?]+\s*$/, '') // dictation auto-punctuates short utterances: "...to Alex."
+    .replace(/^(send|transfer)\s+([a-z]+)\b/i, (m, verb: string, w: string) => {
+      const digit = AMOUNT_HOMOPHONES[w.toLowerCase()]
+      return digit ? `${verb} ${digit}` : m
+    })
+    .replace(/\b([a-z]+)(\s+(?:dollars?|bucks|cents|percent|SOL)\b)/gi, (m, w: string, unit: string) => {
+      const digit = NUMBER_WORDS[w.toLowerCase()]
+      return digit ? `${digit}${unit}` : m
+    })
+    .replace(/\b(\d+(?:\.\d+)?)\s+(?:dollars?|bucks)\b/gi, '$$$1')
+    .replace(/\b(\d+(?:\.\d+)?)\s*percent\b/gi, '$1%')
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
 export function parseIntent(text: string): Intent {
@@ -77,9 +75,7 @@ export function parseIntent(text: string): Intent {
     return { amount, intent: 'instant_send', recipient: send[3].trim(), token }
   }
 
-  const buy = t.match(
-    /^buy\s+\$?(\d*\.?\d+)\s+(?:of|worth of)\s+([a-z]+)\b.*?(?:(\d*\.?\d+)\s*cents|\$(\d*\.?\d+))/i,
-  )
+  const buy = t.match(/^buy\s+\$?(\d*\.?\d+)\s+(?:of|worth of)\s+([a-z]+)\b.*?(?:(\d*\.?\d+)\s*cents|\$(\d*\.?\d+))/i)
   if (buy) {
     const token = buy[2].toUpperCase()
     const amount_usd = Number(buy[1])

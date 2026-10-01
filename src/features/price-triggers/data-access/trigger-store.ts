@@ -133,7 +133,9 @@ export function describeTrigger(t: PriceTrigger): { detail: string; title: strin
   if (t.kind === 'buy') {
     const spend = t.amountUsd ? `$${t.amountUsd}` : `${(Number(t.amountLamports) / 1e9).toFixed(4)} WSOL`
     return {
-      detail: t.expiresAt ? `Expires ${new Date(t.expiresAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}` : 'No expiry',
+      detail: t.expiresAt
+        ? `Expires ${new Date(t.expiresAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}`
+        : 'No expiry',
       title: `Buy ${spend} of ${t.symbol} ${t.direction} ${formatUsd(t.targetUsd)}`,
     }
   }

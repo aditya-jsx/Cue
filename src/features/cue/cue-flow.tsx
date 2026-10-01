@@ -1,7 +1,15 @@
 import Ionicons from '@expo/vector-icons/Ionicons'
 import { useStore } from '@nanostores/react'
 import { type ReactNode, useEffect, useState } from 'react'
-import { Pressable, ScrollView, StyleSheet, TextInput, type TextInputProps, useWindowDimensions, View } from 'react-native'
+import {
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  TextInput,
+  type TextInputProps,
+  useWindowDimensions,
+  View,
+} from 'react-native'
 import Animated, {
   Easing,
   FadeIn,
@@ -118,7 +126,7 @@ function Listening() {
   const c = useCue()
   const insets = useSafeAreaInsets()
   const { height } = useWindowDimensions()
-  const { live, text } = useStore($flow)
+  const { engine, live, notice, text } = useStore($flow)
   const words = text.split(' ').filter(Boolean)
   const [shown, setShown] = useState(0)
   const [thinking, setThinking] = useState(false)
@@ -135,10 +143,43 @@ function Listening() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [live])
 
-  // Real capture: transcript streams in via the store as the user speaks, shown as it arrives.
-  // (Listening remounts fresh each time flow.startLiveListening() is called, so shown/thinking start clean.)
+  // Gemini engine: record the clip, let the assistant hear and parse it. The clip ends on its own when the user stops
+  // talking; the wake-word service is paused for the recording (one mic client at a time) and handed the mic back after.
   useEffect(() => {
-    if (!live) return
+    if (!live || engine !== 'gemini') return
+    CueNative.stopWakeWordService()
+    CueNative.startAudioCapture()
+    let cancelled = false
+    const subs = [
+      CueNative.addListener('onAudioCaptured', ({ wav }) => {
+        if (cancelled) return
+        setThinking(true)
+        resumeWakeWord()
+        void flow.finishAudio(wav).then((reached) => {
+          if (reached || cancelled) return
+          setThinking(false)
+          flow.useAndroidFallback()
+        })
+      }),
+      CueNative.addListener('onAudioError', ({ message }) => {
+        if (cancelled) return
+        resumeWakeWord()
+        // Nothing said within the window: close quietly. Anything else (mic busy) hands over to Android's recognizer.
+        if (message === 'nospeech') flow.cancel()
+        else flow.useAndroidFallback()
+      }),
+    ]
+    return () => {
+      cancelled = true
+      subs.forEach((sub) => sub.remove())
+      CueNative.stopAudioCapture()
+      resumeWakeWord()
+    }
+  }, [engine, live])
+
+  // Android engine (fallback): live transcript streams in via the store as the user speaks, shown as it arrives.
+  useEffect(() => {
+    if (!live || engine !== 'android') return
     // The wake-word service holds the mic continuously (AudioRecord), which starves SpeechRecognizer
     // ("not connected to the recognition service") if both run at once — free the mic for it, then
     // hand it back once this utterance's result/error arrives (starting it is a no-op if it's already
@@ -176,7 +217,7 @@ function Listening() {
       CueNative.stopSpeechRecognition()
       resumeWakeWord()
     }
-  }, [live])
+  }, [engine, live])
 
   const visibleWords = live ? words : words.slice(0, shown)
 
@@ -217,6 +258,11 @@ function Listening() {
           top: at(470),
         }}
       >
+        {visibleWords.length === 0 && notice ? (
+          <Txt style={{ textAlign: 'center' }} v="sub">
+            {notice}
+          </Txt>
+        ) : null}
         {visibleWords.map((w, i) => (
           <Animated.Text
             entering={FadeInDown.duration(300)}
@@ -319,7 +365,10 @@ function useRefreshWallet() {
 }
 
 function Confirm() {
-  const { plan } = useStore($flow)
+  const { plan, stack, text } = useStore($flow)
+  // What the assistant heard, so a misheard amount or name is caught before signing. Not shown for the manual form,
+  // where the user typed the values themselves.
+  const spoken = stack[0] !== 'compose' && text ? text : null
   const { account } = useMobileWallet()
   const { client, cluster } = useAppCluster()
   const refreshWallet = useRefreshWallet()
@@ -359,6 +408,12 @@ function Confirm() {
 
   return (
     <Sheet top={104}>
+      {spoken ? (
+        <Animated.View entering={stagger(0)} style={{ marginBottom: 16 }}>
+          <Txt v="k">You said</Txt>
+          <Txt style={{ fontSize: 17, marginTop: 4 }}>{`“${spoken}”`}</Txt>
+        </Animated.View>
+      ) : null}
       {plan.kind === 'send' ? (
         <>
           <Animated.View entering={stagger(0)}>
@@ -528,7 +583,9 @@ function Pill({ label, on, onPress }: { label: string; on: boolean; onPress: () 
   const c = useCue()
   return (
     <Press label={label} onPress={onPress}>
-      <View style={{ backgroundColor: on ? c.accent : c.sep, borderRadius: 999, paddingHorizontal: 16, paddingVertical: 9 }}>
+      <View
+        style={{ backgroundColor: on ? c.accent : c.sep, borderRadius: 999, paddingHorizontal: 16, paddingVertical: 9 }}
+      >
         <Txt style={{ color: on ? c.onAccent : c.text, fontSize: 15, fontWeight: '500' }}>{label}</Txt>
       </View>
     </Press>
@@ -547,9 +604,7 @@ function Compose() {
   const [kind, setKind] = useState<ComposeKind>(compose)
   const [amount, setAmount] = useState(String((d.intent === 'instant_send' ? d.amount : d.amount_usd) ?? ''))
   const [to, setTo] = useState(
-    d.intent === 'instant_send' && plan.kind === 'send'
-      ? plan.recipientName
-      : (d.recipient ?? contacts[0]?.name ?? ''),
+    d.intent === 'instant_send' && plan.kind === 'send' ? plan.recipientName : (d.recipient ?? contacts[0]?.name ?? ''),
   )
   const [symbol, setSymbol] = useState<Symbol>(d.token === 'SOL' ? 'SOL' : 'JUP')
   const [direction, setDirection] = useState<TriggerDirection>(d.condition ?? 'below')
@@ -603,7 +658,13 @@ function Compose() {
         />
         {kind === 'send' ? (
           <>
-            <Field keyboardType="decimal-pad" label="Amount (SOL)" onChangeText={setAmount} placeholder="0.1" value={amount} />
+            <Field
+              keyboardType="decimal-pad"
+              label="Amount (SOL)"
+              onChangeText={setAmount}
+              placeholder="0.1"
+              value={amount}
+            />
             <View style={{ gap: 6, marginTop: 16 }}>
               <Txt v="k">To</Txt>
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
@@ -629,7 +690,13 @@ function Compose() {
                 <Pill key={s} label={s} on={symbol === s} onPress={() => setSymbol(s)} />
               ))}
             </View>
-            <Field keyboardType="decimal-pad" label="Spend (USD)" onChangeText={setAmount} placeholder="5" value={amount} />
+            <Field
+              keyboardType="decimal-pad"
+              label="Spend (USD)"
+              onChangeText={setAmount}
+              placeholder="5"
+              value={amount}
+            />
             <Segment
               onChange={(i) => setDirection(i ? 'above' : 'below')}
               options={['When it falls to', 'When it rises to']}
@@ -647,7 +714,12 @@ function Compose() {
         ) : null}
         {kind === 'guard' ? (
           <>
-            <Field keyboardType="decimal-pad" label="Alert when my portfolio drops (%)" onChangeText={setPct} value={pct} />
+            <Field
+              keyboardType="decimal-pad"
+              label="Alert when my portfolio drops (%)"
+              onChangeText={setPct}
+              value={pct}
+            />
             <Segment
               onChange={(i) => setTimeframe(i ? '24h' : '1h')}
               options={['Within 1 hour', 'Within 24 hours']}

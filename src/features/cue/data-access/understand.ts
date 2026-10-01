@@ -3,6 +3,10 @@ import { type Intent, normalizeTranscript, parseIntent, WATCHABLE_TOKENS } from 
 const API_URL = process.env.EXPO_PUBLIC_CUE_API_URL
 const CLIENT_TOKEN = process.env.EXPO_PUBLIC_CUE_CLIENT_TOKEN ?? ''
 const TIMEOUT_MS = 10_000
+const AUDIO_TIMEOUT_MS = 20_000 // hearing audio is slower than reading text, and may retry on a busy model
+
+/** Whether the Gemini assistant is configured. Without it, voice falls back to Android's recognizer + local parser. */
+export const assistantConfigured = Boolean(API_URL)
 
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null)
 const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null)
@@ -25,7 +29,7 @@ export function toDraft(raw: unknown): Draft | null {
   if (!raw || typeof raw !== 'object') return null
   const o = raw as Record<string, unknown>
   if (o.intent !== 'instant_send' && o.intent !== 'conditional_buy' && o.intent !== 'portfolio_guard') return null
-  const pick = <T,>(v: T | null) => v ?? undefined
+  const pick = <T>(v: T | null) => v ?? undefined
   return {
     action: o.action === 'pause_activity' || o.action === 'alert_only' ? o.action : undefined,
     amount: pick(num(o.amount)),
@@ -48,7 +52,9 @@ export function toIntent(raw: unknown): Intent | null {
     case 'instant_send': {
       const amount = num(o.amount)
       const recipient = str(o.recipient)
-      return amount && recipient ? { amount, intent: 'instant_send', recipient, token: str(o.token)?.toUpperCase() ?? 'SOL' } : null
+      return amount && recipient
+        ? { amount, intent: 'instant_send', recipient, token: str(o.token)?.toUpperCase() ?? 'SOL' }
+        : null
     }
     case 'conditional_buy': {
       const amount_usd = num(o.amount_usd)
@@ -80,7 +86,10 @@ export function toIntent(raw: unknown): Intent | null {
  * The understanding layer: Claude (via Cue's proxy) reads the raw transcript with the user's contacts as context and
  * returns an intent. Offline, timed out, or unconfigured, the local parser takes over so the app never goes dead.
  */
-export async function understand(transcript: string, contacts: string[]): Promise<{ draft: Draft | null; intent: Intent }> {
+export async function understand(
+  transcript: string,
+  contacts: string[],
+): Promise<{ draft: Draft | null; intent: Intent }> {
   const local = () => {
     const intent = parseIntent(normalizeTranscript(transcript))
     return { draft: intent.intent === 'unsupported' ? null : intent, intent }
@@ -92,7 +101,12 @@ export async function understand(transcript: string, contacts: string[]): Promis
   try {
     const response = await fetch(`${API_URL}/api/parse-intent`, {
       // Cue's deterministic cleanup first (e.g. "send to sold" -> "send 2 SOL"), with the raw words as a hint.
-      body: JSON.stringify({ contacts, heard: transcript, text: normalizeTranscript(transcript), tokens: WATCHABLE_TOKENS }),
+      body: JSON.stringify({
+        contacts,
+        heard: transcript,
+        text: normalizeTranscript(transcript),
+        tokens: WATCHABLE_TOKENS,
+      }),
       headers: { 'content-type': 'application/json', 'x-cue-client': CLIENT_TOKEN },
       method: 'POST',
       signal: abort.signal,
@@ -105,6 +119,41 @@ export async function understand(transcript: string, contacts: string[]): Promis
   } catch (error) {
     console.warn('[CueUnderstand] falling back to the local parser:', error)
     return local()
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
+ * Sends a recorded clip to the assistant, which hears it and returns what was said plus the intent. Returns null when
+ * the assistant can't be reached, so the caller can fall back to Android's recognizer instead of leaving voice dead.
+ */
+export async function understandAudio(
+  wavBase64: string,
+  contacts: string[],
+): Promise<{ draft: Draft | null; intent: Intent; transcript: string } | null> {
+  if (!API_URL) return null
+  const abort = new AbortController()
+  const timer = setTimeout(() => abort.abort(), AUDIO_TIMEOUT_MS)
+  try {
+    const response = await fetch(`${API_URL}/api/parse-intent`, {
+      body: JSON.stringify({ audio: wavBase64, contacts, mimeType: 'audio/wav', tokens: WATCHABLE_TOKENS }),
+      headers: { 'content-type': 'application/json', 'x-cue-client': CLIENT_TOKEN },
+      method: 'POST',
+      signal: abort.signal,
+    })
+    if (!response.ok) throw new Error(`parse-intent ${response.status}`)
+    const body = (await response.json()) as { draft?: unknown; transcript?: unknown }
+    const intent = toIntent(body)
+    if (!intent) throw new Error('parse-intent returned an unusable intent')
+    return {
+      draft: intent.intent === 'unsupported' ? toDraft(body.draft) : intent,
+      intent,
+      transcript: typeof body.transcript === 'string' ? body.transcript.trim() : '',
+    }
+  } catch (error) {
+    console.warn('[CueUnderstand] audio request failed:', error)
+    return null
   } finally {
     clearTimeout(timer)
   }

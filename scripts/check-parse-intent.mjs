@@ -56,10 +56,35 @@ assert.equal(normalizeTranscript('send 1,000 SOL to Alex'), 'send 1,000 SOL to A
 assert.equal(normalizeTranscript('I want to go for it'), 'I want to go for it')
 
 // Claude's reply crosses a trust boundary: well-formed answers become Intents, anything else is rejected.
-const nulls = { action: null, amount: null, amount_usd: null, condition: null, reason: null, recipient: null, threshold_pct: null, threshold_usd: null, timeframe: null, token: null }
+const nulls = {
+  action: null,
+  amount: null,
+  amount_usd: null,
+  condition: null,
+  reason: null,
+  recipient: null,
+  threshold_pct: null,
+  threshold_usd: null,
+  timeframe: null,
+  token: null,
+}
 assert.deepEqual(toIntent({ ...nulls, amount: 2, intent: 'instant_send', recipient: 'Alex', token: 'sol' }), sendAlex)
-assert.deepEqual(toIntent({ ...nulls, amount_usd: 20, condition: 'below', intent: 'conditional_buy', threshold_usd: 0.85, token: 'jup' }), buy)
-assert.equal(toIntent({ ...nulls, action: 'pause_activity', intent: 'portfolio_guard', threshold_pct: 10, timeframe: '1h' }).action, 'pause_activity')
+assert.deepEqual(
+  toIntent({
+    ...nulls,
+    amount_usd: 20,
+    condition: 'below',
+    intent: 'conditional_buy',
+    threshold_usd: 0.85,
+    token: 'jup',
+  }),
+  buy,
+)
+assert.equal(
+  toIntent({ ...nulls, action: 'pause_activity', intent: 'portfolio_guard', threshold_pct: 10, timeframe: '1h' })
+    .action,
+  'pause_activity',
+)
 assert.equal(toIntent({ ...nulls, intent: 'unsupported', reason: 'Nope.' }).reason, 'Nope.')
 assert.equal(toIntent({ ...nulls, amount: '2', intent: 'instant_send', recipient: 'Alex' }), null)
 assert.equal(toIntent({ ...nulls, intent: 'conditional_buy', token: 'JUP' }), null)

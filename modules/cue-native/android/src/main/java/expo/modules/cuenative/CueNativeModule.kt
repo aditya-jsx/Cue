@@ -16,7 +16,7 @@ class CueNativeModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("CueNative")
 
-    Events("onWakeWordDetected", "onSpeechPartial", "onSpeechResult", "onSpeechError")
+    Events("onWakeWordDetected", "onSpeechPartial", "onSpeechResult", "onSpeechError", "onAudioCaptured", "onAudioError")
 
     Function("startHeartbeatService") {
       val ctx = appContext.reactContext ?: throw Exceptions.ReactContextLost()
@@ -58,6 +58,15 @@ class CueNativeModule : Module() {
         .setAutoCancel(true)
         .build()
       nm.notify((System.currentTimeMillis() % Int.MAX_VALUE).toInt(), notification)
+    }
+
+    // Records one spoken command and returns it as base64 WAV, ending on its own when the user stops talking.
+    Function("startAudioCapture") {
+      AudioCapture.start { event, payload -> sendEvent(event, payload) }
+    }
+
+    Function("stopAudioCapture") {
+      AudioCapture.stop()
     }
 
     Function("startSpeechRecognition") { hints: List<String> ->

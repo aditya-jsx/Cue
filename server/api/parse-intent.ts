@@ -1,21 +1,25 @@
-import { ApiError, GoogleGenAI } from '@google/genai'
+import { ApiError, GoogleGenAI, ThinkingLevel } from '@google/genai'
 
-// Turns a (often garbled) speech transcript into Cue's intent JSON. Only parses: the app re-validates every field
-// and shows a confirm screen before anything executes, so this endpoint never touches funds or keys.
+// Turns a spoken wallet command into Cue's intent JSON. The command arrives as an audio clip (Gemini does the
+// hearing) or as text (suggestion chips, or a transcript from the offline fallback). Only parses: the app
+// re-validates every field and shows a confirm screen before anything executes, so this endpoint never touches
+// funds or keys.
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) // set in the Vercel project env
 
 const SYSTEM = `You turn a spoken wallet command into Cue's intent JSON.
 
-The command comes from on-device speech recognition and is often garbled. Recover what the user most plausibly meant: numbers can arrive as words or homophones ("to"/"too" for 2, "for" for 4, "won" for 1), "SOL" can arrive as "sold", "soul" or "sole", and short names lose letters ("LX" for Alex).
+The command arrives either as a short audio clip of the user speaking, or as text produced by speech recognition. Text from speech recognition is often garbled: recover what the user most plausibly meant. Numbers can arrive as words or homophones ("to"/"too" for 2, "for" for 4, "won" for 1), "SOL" can arrive as "sold", "soul" or "sole", and short names lose letters ("LX" for Alex). For audio, listen carefully: the token is spelled S-O-L (pronounced "sol"), and names are most likely one of the user's contacts.
 
-The command has already had Cue's own cleanup applied; the raw recognition, when shown, is only a hint.
+Always write what the user said into "transcript", as plain text with numbers as digits and the token as "SOL". If the audio is silent or has no speech, set transcript to an empty string and intent to "unsupported" with reason "I didn't catch that.".
 
 Cue can do exactly three things:
 - instant_send: send SOL right now. Fill amount (in SOL), token ("SOL") and recipient.
 - conditional_buy: buy a token when its price crosses a threshold. Fill amount_usd, token, condition ("below" or "above") and threshold_usd in dollars ("85 cents" is 0.85).
 - portfolio_guard: watch for a drop in the user's portfolio. Fill threshold_pct, timeframe ("1h", or "24h" for "today"/"a day"/unspecified) and action ("pause_activity" when they say pause, stop or freeze; otherwise "alert_only").
 Anything else is "unsupported", with a short, friendly reason written to the user.
+
+Every command starts with a verb: "send", "buy", or "alert"/"notify"/"pause". A buy command begins "buy ..." even when the first sound is faint, and "buy five dollars" blends together easily, so it is very easy to mishear as "$55": amounts are small (Cue caps a rule at $50), so "buy five dollars" is $5, "buy ten dollars" is $10, and a heard amount above $50 is almost always two numbers run together. Keep the verb in "transcript".
 
 For the recipient: if the spoken name plausibly matches one of the user's contacts, return that contact's exact name. Return a wallet address unchanged. Otherwise return the name as heard.
 Never invent an amount, token or price the user didn't say. If you can tell which action they want but a value is missing or unintelligible, still set intent to that action, fill in what you did understand, leave the rest null, and put a short question for the missing part in reason.
@@ -37,6 +41,7 @@ const SCHEMA = {
     threshold_usd: nullable({ type: 'number' }),
     timeframe: nullable({ enum: ['1h', '24h'], type: 'string' }),
     token: nullable({ type: 'string' }),
+    transcript: { type: 'string' },
   },
   required: [
     'action',
@@ -50,13 +55,14 @@ const SCHEMA = {
     'threshold_usd',
     'timeframe',
     'token',
+    'transcript',
   ],
   type: 'object',
 }
 
-const UNSUPPORTED = (reason: string) => Response.json({ draft: null, intent: 'unsupported', reason })
+const UNSUPPORTED = (reason: string) => Response.json({ draft: null, intent: 'unsupported', reason, transcript: '' })
 
-type Raw = Record<string, unknown> & { intent?: string; reason?: string | null }
+type Raw = Record<string, unknown> & { intent?: string; reason?: string | null; transcript?: string }
 
 const LABELS: Record<string, string> = {
   amount: 'amount',
@@ -79,22 +85,31 @@ const REQUIRED: Record<string, string[]> = {
  * of what was understood (so the app can open a pre-filled form instead of dead-ending).
  */
 function toCueIntent(raw: Raw) {
-  const fields = Object.fromEntries(Object.entries(raw).filter(([k, v]) => v !== null && k !== 'reason'))
+  const transcript = typeof raw.transcript === 'string' ? raw.transcript.trim() : ''
+  const fields = Object.fromEntries(
+    Object.entries(raw).filter(([k, v]) => v !== null && k !== 'reason' && k !== 'transcript'),
+  )
   const required = raw.intent ? REQUIRED[raw.intent] : undefined
-  if (!required) return { draft: null, intent: 'unsupported', reason: raw.reason || "I can't do that yet." }
+  if (!required) return { draft: null, intent: 'unsupported', reason: raw.reason || "I can't do that yet.", transcript }
 
   const missing = required.filter((k) => fields[k] === undefined)
   if (missing.length) {
     const what = [...new Set(missing.map((k) => LABELS[k]))].join(' and ')
-    return { draft: fields, intent: 'unsupported', reason: raw.reason || `I didn't catch the ${what}.` }
+    return { draft: fields, intent: 'unsupported', reason: raw.reason || `I didn't catch the ${what}.`, transcript }
   }
-  if (raw.intent === 'instant_send') return { ...fields, token: String(fields.token ?? 'SOL').toUpperCase() }
-  if (raw.intent === 'conditional_buy') return { ...fields, token: String(fields.token).toUpperCase() }
-  return { action: 'alert_only', timeframe: '24h', ...fields }
+  if (raw.intent === 'instant_send')
+    return { ...fields, token: String(fields.token ?? 'SOL').toUpperCase(), transcript }
+  if (raw.intent === 'conditional_buy') return { ...fields, token: String(fields.token).toUpperCase(), transcript }
+  return { action: 'alert_only', timeframe: '24h', ...fields, transcript }
 }
 
 const strings = (value: unknown, max: number) =>
-  Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string').map((v) => v.slice(0, 64)).slice(0, max) : []
+  Array.isArray(value)
+    ? value
+        .filter((v): v is string => typeof v === 'string')
+        .map((v) => v.slice(0, 64))
+        .slice(0, max)
+    : []
 
 export async function POST(request: Request): Promise<Response> {
   // ponytail: a shared token only raises the bar (it ships inside the APK); add per-device rate limiting before a
@@ -103,38 +118,88 @@ export async function POST(request: Request): Promise<Response> {
   if (token && request.headers.get('x-cue-client') !== token) return new Response('Forbidden', { status: 403 })
 
   const body = (await request.json().catch(() => null)) as {
+    audio?: unknown
     contacts?: unknown
     heard?: unknown
+    mimeType?: unknown
     text?: unknown
     tokens?: unknown
   } | null
+  // ~10s of 16kHz mono PCM16 is ~320KB (~430K base64 chars); anything much larger isn't a voice command.
+  const audio = typeof body?.audio === 'string' && body.audio.length < 1_500_000 ? body.audio : ''
+  const mimeType = body?.mimeType === 'audio/mp4' || body?.mimeType === 'audio/aac' ? body.mimeType : 'audio/wav'
   const text = typeof body?.text === 'string' ? body.text.trim().slice(0, 500) : ''
-  if (!text) return new Response('Missing text', { status: 400 })
+  if (!audio && !text) return new Response('Missing audio or text', { status: 400 })
   const contacts = strings(body?.contacts, 50)
   const tokens = strings(body?.tokens, 20)
   const heard = typeof body?.heard === 'string' ? body.heard.trim().slice(0, 500) : ''
 
+  const context = `Contacts: ${contacts.join(', ') || 'none'}\nTokens Cue can buy: ${tokens.join(', ') || 'SOL'}`
+  const contents = audio
+    ? [
+        {
+          parts: [
+            { text: `${context}\nThe user's spoken command is in the audio.` },
+            { inlineData: { data: audio, mimeType } },
+          ],
+          role: 'user',
+        },
+      ]
+    : `${context}\nCommand: ${JSON.stringify(text)}${heard && heard !== text ? `\nRaw speech recognition: ${JSON.stringify(heard)}` : ''}`
+
+  const config = {
+    responseJsonSchema: SCHEMA,
+    responseMimeType: 'application/json',
+    systemInstruction: SYSTEM,
+    temperature: 0,
+  }
+  // Gemini answers "503 high demand" in bursts: retry briefly, and on the last try use the lighter model.
+  const MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash', 'gemini-3.5-flash-lite']
+
+  const attempts: string[] = []
   try {
-    const response = await ai.models.generateContent({
-      config: {
-        responseJsonSchema: SCHEMA,
-        responseMimeType: 'application/json',
-        systemInstruction: SYSTEM,
-        temperature: 0,
-        thinkingConfig: { thinkingBudget: 0 }, // a voice command needs an answer in ~1s, not reasoning
-      },
-      contents: `Contacts: ${contacts.join(', ') || 'none'}\nTokens Cue can buy: ${tokens.join(', ') || 'SOL'}\nCommand: ${JSON.stringify(text)}${heard && heard !== text ? `\nRaw speech recognition: ${JSON.stringify(heard)}` : ''}`,
-      model: 'gemini-2.5-flash',
-    })
+    let response!: Awaited<ReturnType<typeof ai.models.generateContent>>
+    for (let attempt = 0; attempt < MODELS.length; attempt++) {
+      try {
+        response = await ai.models.generateContent({
+          // a voice command needs an answer in ~1s, not reasoning; newer models take a different thinking option, so 2.5 takes a budget, newer ones a level
+          config: {
+            ...config,
+            thinkingConfig: MODELS[attempt].startsWith('gemini-2.5')
+              ? { thinkingBudget: 0 }
+              : { thinkingLevel: ThinkingLevel.MINIMAL },
+          },
+          contents,
+          model: MODELS[attempt],
+        })
+        break
+      } catch (error) {
+        attempts.push(
+          `${MODELS[attempt]}: ${error instanceof ApiError ? `${error.status} ${error.message.slice(0, 120)}` : String(error)}`,
+        )
+        console.warn(
+          '[parse-intent] attempt',
+          attempt,
+          MODELS[attempt],
+          error instanceof ApiError ? `${error.status} ${error.message.slice(0, 200)}` : error,
+        )
+        const retryable = error instanceof ApiError && (error.status === 503 || error.status === 429)
+        if (!retryable || attempt === MODELS.length - 1) throw error
+        await new Promise((resolve) => setTimeout(resolve, 600 * (attempt + 1)))
+      }
+    }
     const finish = response.candidates?.[0]?.finishReason
     if (!response.text || finish !== 'STOP') {
       return UNSUPPORTED("I couldn't work that out. Try saying it another way.")
     }
-    return Response.json(toCueIntent(JSON.parse(response.text) as Raw))
+    const result = toCueIntent(JSON.parse(response.text) as Raw)
+    return Response.json(audio ? result : { ...result, transcript: text })
   } catch (error) {
     if (error instanceof ApiError) {
       console.error('[parse-intent] Gemini error', error.status, error.message)
-      return new Response(`Upstream ${error.status}: ${error.message}`, { status: error.status === 429 ? 429 : 502 })
+      return new Response(`Upstream ${error.status}: ${error.message} | attempts: ${attempts.join(' ; ')}`, {
+        status: error.status === 429 ? 429 : 502,
+      })
     }
     throw error
   }

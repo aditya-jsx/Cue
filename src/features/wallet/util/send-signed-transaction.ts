@@ -1,8 +1,4 @@
-import {
-  getBase64EncodedWireTransaction,
-  getSignatureFromTransaction,
-  type Transaction,
-} from '@solana/kit'
+import { getBase64EncodedWireTransaction, getSignatureFromTransaction, type Transaction } from '@solana/kit'
 
 import type { SolanaClient } from '@/features/cluster/data-access/create-solana-client'
 import { confirmSignature } from '@/features/wallet/util/confirm-signature'

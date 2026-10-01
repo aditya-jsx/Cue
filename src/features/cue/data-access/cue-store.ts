@@ -4,7 +4,7 @@ import { createMMKV } from 'react-native-mmkv'
 
 import { APP_STORAGE_ID } from '@/features/cluster/data-access/create-cluster-props'
 import { type Intent, normalizeTranscript, WATCHABLE_TOKENS } from '@/features/cue/data-access/parse-intent'
-import { type Draft, understand } from '@/features/cue/data-access/understand'
+import { assistantConfigured, type Draft, understand, understandAudio } from '@/features/cue/data-access/understand'
 import {
   createTrigger,
   formatUsd,
@@ -102,7 +102,11 @@ export function pushLogEntry(entry: Omit<LogEntry, 'at' | 'id'>) {
   $cue.set({ ...cue, log })
 }
 
-const consonants = (s: string) => s.toLowerCase().replace(/[^a-z]/g, '').replace(/[aeiou]/g, '')
+const consonants = (s: string) =>
+  s
+    .toLowerCase()
+    .replace(/[^a-z]/g, '')
+    .replace(/[aeiou]/g, '')
 
 /** A raw address passes through; otherwise match a saved contact by name. Falls back to a consonant-only match
  * ("Alex" heard as "LX") since on-device STT sometimes drops the vowels of a short trailing name. */
@@ -122,7 +126,19 @@ const nope = (reason: string): Plan => ({ kind: 'nope', reason })
 
 /** Words the speech recognizer should favor: Cue's verbs, units, tokens and the user's contacts. */
 export function speechHints(): string[] {
-  const words = ['Cue', 'send', 'buy', 'dollars', 'cents', 'percent', 'portfolio', 'pause', 'alert', 'Jupiter', 'Solana']
+  const words = [
+    'Cue',
+    'send',
+    'buy',
+    'dollars',
+    'cents',
+    'percent',
+    'portfolio',
+    'pause',
+    'alert',
+    'Jupiter',
+    'Solana',
+  ]
   return [...words, ...WATCHABLE_TOKENS, ...$cue.get().contacts.map((c) => c.name)]
 }
 
@@ -164,7 +180,8 @@ export function prepareIntent(intent: Intent): Plan {
       }
     }
     case 'portfolio_guard':
-      if (!(intent.threshold_pct > 0 && intent.threshold_pct < 100)) return nope('The drop has to be between 0% and 100%.')
+      if (!(intent.threshold_pct > 0 && intent.threshold_pct < 100))
+        return nope('The drop has to be between 0% and 100%.')
       if (!prices.SOL) return nope(LOADING_PRICES)
       return {
         action: intent.action,
@@ -179,6 +196,8 @@ export function prepareIntent(intent: Intent): Plan {
 export const $flow = atom<{
   compose: ComposeKind
   draft: Draft | null // what was understood (even partly), so "Edit details" can pre-fill the form
+  engine: 'android' | 'gemini' // who is hearing the user: the Gemini assistant (default) or Android's recognizer (fallback)
+  notice: string | null // shown on the listening screen, e.g. why voice switched to the fallback
   live: boolean // true when `text` is a real transcript streaming in, not a tapped suggestion
   source: 'mic' | 'wake' // who opened listening: a wake-word hit may be a false alarm, so it fails quietly
   plan: Plan
@@ -188,7 +207,9 @@ export const $flow = atom<{
 }>({
   compose: 'send',
   draft: null,
+  engine: 'gemini',
   live: false,
+  notice: null,
   plan: nope(''),
   source: 'mic',
   signature: null,
@@ -204,6 +225,11 @@ const EDITABLE: Partial<Record<Intent['intent'], ComposeKind>> = {
   portfolio_guard: 'guard',
 }
 let understanding = 0
+const stillListening = (ticket: number) => {
+  // Cancelled, or a newer request started, while the assistant was thinking: the answer is dropped.
+  const { stack } = $flow.get()
+  return ticket === understanding && stack.length === 1 && stack[0] === 'listen'
+}
 
 function route(text: string, plan: Plan, draft: Draft | null) {
   $flow.set({ ...$flow.get(), draft, plan, signature: null, text })
@@ -219,11 +245,35 @@ export const flow = {
     const text = normalizeTranscript(raw)
     if (!text) return route(text, nope("I didn't catch that."), null)
     const ticket = ++understanding
-    const { draft, intent } = await understand(raw, $cue.get().contacts.map((c) => c.name))
+    const { draft, intent } = await understand(
+      raw,
+      $cue.get().contacts.map((c) => c.name),
+    )
     // Cancelled, or a newer request started, while Claude was thinking: drop this answer.
-    const { stack } = $flow.get()
-    if (ticket !== understanding || stack.length !== 1 || stack[0] !== 'listen') return
+    if (!stillListening(ticket)) return
     route(text, prepareIntent(intent), draft)
+  },
+  /** A recorded clip goes to the assistant, which hears and parses it. Returns false if it couldn't be reached. */
+  async finishAudio(wav: string): Promise<boolean> {
+    const ticket = ++understanding
+    const result = await understandAudio(
+      wav,
+      $cue.get().contacts.map((c) => c.name),
+    )
+    if (!stillListening(ticket)) return true
+    if (!result) return false
+    if (!result.transcript) {
+      // Nothing was said (or it wasn't speech): close quietly after a wake word, say so after a tap.
+      if ($flow.get().source === 'wake') flow.cancel()
+      else route('', nope("I didn't catch that."), null)
+      return true
+    }
+    route(result.transcript, prepareIntent(result.intent), result.draft)
+    return true
+  },
+  /** The assistant is unreachable: switch to Android's recognizer so voice still works, and say why. */
+  useAndroidFallback() {
+    $flow.set({ ...$flow.get(), engine: 'android', notice: "Cue's assistant is unreachable. Say it again.", text: '' })
   },
   /** Speech got a detail wrong ("$55" for "five dollars"): reopen what was understood as a pre-filled form. */
   edit() {
@@ -261,7 +311,16 @@ export const flow = {
   /** Mic button or wake word. No-ops if a flow screen is already open, so a stray wake word can't interrupt it. */
   startLiveListening(source: 'mic' | 'wake' = 'mic') {
     if (!idle()) return
-    $flow.set({ ...$flow.get(), live: true, signature: null, source, stack: ['listen'], text: '' })
+    $flow.set({
+      ...$flow.get(),
+      engine: assistantConfigured ? 'gemini' : 'android',
+      live: true,
+      notice: null,
+      signature: null,
+      source,
+      stack: ['listen'],
+      text: '',
+    })
   },
   setTranscript: (text: string) => $flow.set({ ...$flow.get(), text }),
   /** Manual entry: the form builds the same Intent the parser would, and goes through the same gate. */
@@ -341,7 +400,8 @@ export function addContact(rawName: string, rawAddress: string): string | null {
   if (!name) return 'Give this contact a name.'
   if (!isAddress(address)) return "That doesn't look like a Solana address."
   const { contacts } = $cue.get()
-  if (contacts.some((c) => c.name.toLowerCase() === name.toLowerCase())) return `You already have a contact named ${name}.`
+  if (contacts.some((c) => c.name.toLowerCase() === name.toLowerCase()))
+    return `You already have a contact named ${name}.`
   const next = [...contacts, { address, name }]
   storage.set(CONTACTS_KEY, JSON.stringify(next))
   $cue.set({ ...$cue.get(), contacts: next })
