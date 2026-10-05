@@ -14,28 +14,58 @@ import {
   rebaselineGuard,
   stopBuyTriggers,
 } from '@/features/price-triggers/data-access/trigger-store'
-import { $prices, type PricePoint } from '@/features/prices/data-access/price-store'
+import { $prices, type PricePoint, type Symbol } from '@/features/prices/data-access/price-store'
+import { isPriceFresh } from '@/features/prices/util/price-freshness'
 import { shouldFireTrigger } from '@/features/price-triggers/util/should-fire-trigger'
 import { executeAutonomousAction } from '@/features/wallet/util/execute-autonomous-action'
 import CueNative from '../../../../modules/cue-native'
 
+// Symbols whose feed is currently stale, so the log gets one entry per outage and not one every poll.
+const staleSymbols = new Set<Symbol>()
+
+/** True when the price is recent enough to act on. A stalled feed pauses rules instead of firing on old data. */
+function isFresh(symbol: Symbol, point: PricePoint, maxAgeMs: number): boolean {
+  const now = Date.now()
+  if (isPriceFresh(point.publishTimeMs, now, maxAgeMs)) {
+    staleSymbols.delete(symbol)
+    return true
+  }
+  if (!staleSymbols.has(symbol)) {
+    staleSymbols.add(symbol)
+    const minutes = Math.round((now - point.publishTimeMs) / 60_000)
+    pushLogEntry({
+      amount: '—',
+      detail: `${symbol}'s price is ${minutes} min old. Rules wait for a fresh price.`,
+      status: 'Alert',
+      title: 'Price feed is stale',
+    })
+  }
+  return false
+}
+
 /** Checks every active rule against the latest prices; buys spend via the session key, guards alert or pause. */
-export async function evaluateTriggers(client: SolanaClient): Promise<void> {
+export async function evaluateTriggers(client: SolanaClient, maxPriceAgeMs: number): Promise<void> {
   const prices = $prices.get()
   for (const trigger of $triggers.get().filter((t) => t.status === 'active')) {
-    if (trigger.kind === 'buy') await evaluateBuy(client, trigger, prices[trigger.symbol])
-    else evaluateGuard(trigger, prices.SOL)
+    if (trigger.kind === 'buy') await evaluateBuy(client, trigger, prices[trigger.symbol], maxPriceAgeMs)
+    else evaluateGuard(trigger, prices.SOL, maxPriceAgeMs)
   }
 }
 
-async function evaluateBuy(client: SolanaClient, trigger: BuyTrigger, point: PricePoint | undefined) {
+async function evaluateBuy(
+  client: SolanaClient,
+  trigger: BuyTrigger,
+  point: PricePoint | undefined,
+  maxPriceAgeMs: number,
+) {
   const { title } = describeTrigger(trigger)
   if (trigger.expiresAt && Date.now() > trigger.expiresAt) {
     markTriggerExpired(trigger.id)
     pushLogEntry({ amount: '—', detail: 'Expired without the price being hit', status: 'Alert', title })
     return
   }
-  if (!point || !shouldFireTrigger(trigger.direction, point.usd, trigger.targetUsd)) return
+  if (!point || !isFresh(trigger.symbol, point, maxPriceAgeMs)) return
+  if (!shouldFireTrigger(trigger.direction, point.usd, trigger.targetUsd)) return
 
   const spent = `${(Number(trigger.amountLamports) / 1e9).toFixed(4)} WSOL`
   try {
@@ -63,8 +93,8 @@ async function evaluateBuy(client: SolanaClient, trigger: BuyTrigger, point: Pri
 
 // ponytail: tumbling window (baseline resets each window), so a drop straddling two windows can be missed; keep a
 // price history and compare against the window's max if that ever matters.
-function evaluateGuard(trigger: GuardTrigger, sol: PricePoint | undefined) {
-  if (!sol) return
+function evaluateGuard(trigger: GuardTrigger, sol: PricePoint | undefined, maxPriceAgeMs: number) {
+  if (!sol || !isFresh('SOL', sol, maxPriceAgeMs)) return
   if (Date.now() - trigger.baselineAt > trigger.windowMs) {
     rebaselineGuard(trigger.id, sol.usd)
     return

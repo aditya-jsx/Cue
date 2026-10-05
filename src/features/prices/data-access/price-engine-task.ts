@@ -7,6 +7,7 @@ import { resolveActiveSolanaCluster } from '@/features/cluster/data-access/clust
 import { createMmkvCache } from '@/features/cluster/data-access/mmkv-cache'
 import { evaluateTriggers } from '@/features/price-triggers/util/evaluate-triggers'
 import { fetchPrices } from '@/features/prices/util/fetch-prices'
+import { maxPriceAgeMs } from '@/features/prices/util/price-freshness'
 import CueNative from '../../../../modules/cue-native'
 
 const POLL_INTERVAL_MS = 30_000
@@ -35,9 +36,10 @@ AppRegistry.registerHeadlessTask('CueHeartbeat', () => async () => {
 
   for (let i = 0; ; i++) {
     try {
-      const client = createSolanaClient(resolveActiveSolanaCluster(clusterCache))
+      const cluster = resolveActiveSolanaCluster(clusterCache)
+      const client = createSolanaClient(cluster)
       await fetchPrices(client)
-      await evaluateTriggers(client)
+      await evaluateTriggers(client, maxPriceAgeMs(cluster.id))
     } catch (error) {
       console.warn('[CuePriceEngine] Poll failed:', error)
     }
