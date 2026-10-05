@@ -11,6 +11,7 @@ type CueNativeEvents = {
 }
 
 declare class CueNativeModule extends NativeModule<CueNativeEvents> {
+  consumePendingWake(): boolean
   heartbeat(message: string): void
   isIgnoringBatteryOptimizations(): boolean
   notify(title: string, body: string): void

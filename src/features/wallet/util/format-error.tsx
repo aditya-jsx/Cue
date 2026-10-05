@@ -1,5 +1,7 @@
 import { isSolanaError } from '@solana/kit'
 
+import { describeWalletError } from '@/features/wallet/util/describe-wallet-error'
+
 export function formatError(error: unknown): string {
   let message = 'Unknown error occurred'
 
@@ -11,9 +13,8 @@ export function formatError(error: unknown): string {
     message = error
   }
 
-  if (message.includes('UnknownHostException') || message.includes('Unable to resolve host')) {
-    return 'DNS / Network Error (UnknownHostException): The device or emulator cannot reach the Solana RPC server. Please toggle Airplane Mode in your emulator to reset DNS, or check your internet connection.'
-  }
+  const friendly = describeWalletError(error)
+  if (friendly) return friendly
 
   // The wallet session is cancelled when the user leaves the wallet app before answering.
   if (message.includes('CancellationException')) {

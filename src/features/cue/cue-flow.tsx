@@ -126,7 +126,7 @@ function Listening({ covered }: { covered: boolean }) {
   const c = useCue()
   const insets = useSafeAreaInsets()
   const { height } = useWindowDimensions()
-  const { engine, live, notice, text } = useStore($flow)
+  const { engine, live, micBlocked, notice, text } = useStore($flow)
   const words = text.split(' ').filter(Boolean)
   const [shown, setShown] = useState(0)
   const [thinking, setThinking] = useState(false)
@@ -205,6 +205,10 @@ function Listening({ covered }: { covered: boolean }) {
         // 6 = heard nothing at all, 7 = heard something it couldn't transcribe. Nothing said (or a wake-word false
         // alarm) isn't worth an error sheet; a garbled attempt after tapping the mic is.
         const code = Number(/\((\d+)\)/.exec(message)?.[1])
+        if (!cancelled && code === 9) {
+          flow.blockMic() // 9 = no microphone permission
+          return
+        }
         if (!cancelled && (code === 6 || (code === 7 && $flow.get().source === 'wake'))) {
           resumeWakeWord()
           flow.cancel()
@@ -277,6 +281,11 @@ function Listening({ covered }: { covered: boolean }) {
           ))}
         </View>
         <View style={{ bottom: insets.bottom + 24, left: 20, position: 'absolute', right: 20 }}>
+          {micBlocked ? (
+            <View style={{ marginBottom: 12 }}>
+              <CueButton label="Open settings" onPress={() => void Linking.openSettings()} />
+            </View>
+          ) : null}
           <CueButton label="Cancel" onPress={flow.cancel} variant="glass" />
         </View>
       </Animated.View>

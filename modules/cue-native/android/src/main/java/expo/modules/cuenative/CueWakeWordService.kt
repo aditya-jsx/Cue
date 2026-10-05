@@ -116,6 +116,7 @@ class CueWakeWordService : Service() {
         consecutiveHits = 0
         cooldownFramesLeft = COOLDOWN_FRAMES
         Log.i("CueWakeWord", "Detected \"Hey Cue\" (score=$score)")
+        CueWakeWordBus.pendingWakeAt = System.currentTimeMillis() // so an app opened by this wake knows to listen
         playChime()
         bringToForeground()
         CueWakeWordBus.onDetected?.invoke(score)
@@ -192,4 +193,10 @@ class CueWakeWordService : Service() {
 /** In-process bridge from the service (no JS runtime access) to the module (which owns sendEvent). */
 object CueWakeWordBus {
   var onDetected: ((score: Float) -> Unit)? = null
+
+  /**
+   * When the last wake happened. With the app closed, nothing in JS is listening yet when the service detects "Hey Cue",
+   * so the event is lost; the app reads this as it starts and begins listening if the wake was just now.
+   */
+  @Volatile var pendingWakeAt: Long = 0L
 }

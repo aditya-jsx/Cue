@@ -32,6 +32,13 @@ class CueNativeModule : Module() {
       ctx.stopService(Intent(ctx, CueHeartbeatService::class.java))
     }
 
+    // True once if "Hey Cue" was heard in the last few seconds (the app was opened by it), so it can start listening.
+    Function("consumePendingWake") {
+      val at = CueWakeWordBus.pendingWakeAt
+      CueWakeWordBus.pendingWakeAt = 0L
+      at != 0L && System.currentTimeMillis() - at < 20_000
+    }
+
     // Android may pause a backgrounded app with the screen off unless the user exempts it from battery optimisation.
     Function("isIgnoringBatteryOptimizations") {
       val ctx = appContext.reactContext ?: throw Exceptions.ReactContextLost()

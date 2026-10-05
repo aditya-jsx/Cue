@@ -3,6 +3,7 @@ import { atom } from 'nanostores'
 import { createMMKV } from 'react-native-mmkv'
 
 import { APP_STORAGE_ID } from '@/features/cluster/data-access/create-cluster-props'
+import { ensureMicPermission } from '@/features/cue/util/mic-permission'
 import { askBackgroundAccessOnce } from '@/features/cue/util/background-access'
 import { type Intent, normalizeTranscript, WATCHABLE_TOKENS } from '@/features/cue/data-access/parse-intent'
 import { assistantConfigured, type Draft, understand, understandAudio } from '@/features/cue/data-access/understand'
@@ -197,7 +198,8 @@ export function prepareIntent(intent: Intent): Plan {
 export const $flow = atom<{
   compose: ComposeKind
   draft: Draft | null // what was understood (even partly), so "Edit details" can pre-fill the form
-  engine: 'android' | 'gemini' // who is hearing the user: the Gemini assistant (default) or Android's recognizer (fallback)
+  engine: 'android' | 'gemini' | 'none' // who is hearing the user: the Gemini assistant (default), Android's recognizer (fallback), or nobody (no microphone)
+  micBlocked: boolean // the microphone is off for Cue, so the listening screen offers to open Settings
   notice: string | null // shown on the listening screen, e.g. why voice switched to the fallback
   live: boolean // true when `text` is a real transcript streaming in, not a tapped suggestion
   source: 'mic' | 'wake' // who opened listening: a wake-word hit may be a false alarm, so it fails quietly
@@ -210,6 +212,7 @@ export const $flow = atom<{
   draft: null,
   engine: 'gemini',
   live: false,
+  micBlocked: false,
   notice: null,
   plan: nope(''),
   source: 'mic',
@@ -310,12 +313,32 @@ export const flow = {
     $flow.set({ ...$flow.get(), live: false, signature: null, stack: ['listen'], text })
   },
   /** Mic button or wake word. No-ops if a flow screen is already open, so a stray wake word can't interrupt it. */
-  startLiveListening(source: 'mic' | 'wake' = 'mic') {
+  /** Voice can't work without the microphone: say so and offer Settings, instead of a silent "didn't catch that". */
+  blockMic() {
+    $flow.set({
+      ...$flow.get(),
+      engine: 'none',
+      live: true,
+      micBlocked: true,
+      notice: 'Cue needs the microphone to hear you.',
+      text: '',
+    })
+  },
+  async startLiveListening(source: 'mic' | 'wake' = 'mic') {
     if (!idle()) return
+    if (!(await ensureMicPermission())) {
+      if (idle()) {
+        $flow.set({ ...$flow.get(), signature: null, source, stack: ['listen'] })
+        flow.blockMic()
+      }
+      return
+    }
+    if (!idle()) return // a second tap landed while the permission prompt was open
     $flow.set({
       ...$flow.get(),
       engine: assistantConfigured ? 'gemini' : 'android',
       live: true,
+      micBlocked: false,
       notice: null,
       signature: null,
       source,

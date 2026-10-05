@@ -19,7 +19,12 @@ export default function Layout() {
     startPriceEngine().catch((e) => console.warn('[CuePriceEngine] start failed', e))
     startWakeWord().catch((e) => console.warn('[CueWakeWord] start failed', e))
 
-    const subscription = CueNative.addListener('onWakeWordDetected', () => flow.startLiveListening('wake'))
+    const subscription = CueNative.addListener('onWakeWordDetected', () => {
+      CueNative.consumePendingWake() // handled live, so a later start must not listen again
+      void flow.startLiveListening('wake')
+    })
+    // Opened by "Hey Cue" from the background or a locked screen: the event fired before this listener existed.
+    if (CueNative.consumePendingWake()) void flow.startLiveListening('wake')
     return () => subscription.remove()
   }, [])
 
