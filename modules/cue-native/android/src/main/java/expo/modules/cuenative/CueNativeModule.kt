@@ -5,6 +5,9 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
+import android.net.Uri
+import android.os.PowerManager
+import android.provider.Settings
 import android.util.Log
 import expo.modules.kotlin.exception.Exceptions
 import expo.modules.kotlin.modules.Module
@@ -25,7 +28,21 @@ class CueNativeModule : Module() {
 
     Function("stopHeartbeatService") {
       val ctx = appContext.reactContext ?: throw Exceptions.ReactContextLost()
+      CueHeartbeatService.setEnabled(ctx, false) // an explicit stop must not come back after a reboot
       ctx.stopService(Intent(ctx, CueHeartbeatService::class.java))
+    }
+
+    // Android may pause a backgrounded app with the screen off unless the user exempts it from battery optimisation.
+    Function("isIgnoringBatteryOptimizations") {
+      val ctx = appContext.reactContext ?: throw Exceptions.ReactContextLost()
+      ctx.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(ctx.packageName)
+    }
+
+    Function("requestIgnoreBatteryOptimizations") {
+      val ctx = appContext.reactContext ?: throw Exceptions.ReactContextLost()
+      val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${ctx.packageName}"))
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      ctx.startActivity(intent)
     }
 
     Function("startWakeWordService") {

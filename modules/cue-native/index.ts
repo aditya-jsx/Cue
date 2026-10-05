@@ -12,7 +12,9 @@ type CueNativeEvents = {
 
 declare class CueNativeModule extends NativeModule<CueNativeEvents> {
   heartbeat(message: string): void
+  isIgnoringBatteryOptimizations(): boolean
   notify(title: string, body: string): void
+  requestIgnoreBatteryOptimizations(): void
   startAudioCapture(): void
   startHeartbeatService(): void
   stopAudioCapture(): void

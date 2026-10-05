@@ -3,6 +3,7 @@ import { atom } from 'nanostores'
 import { createMMKV } from 'react-native-mmkv'
 
 import { APP_STORAGE_ID } from '@/features/cluster/data-access/create-cluster-props'
+import { askBackgroundAccessOnce } from '@/features/cue/util/background-access'
 import { type Intent, normalizeTranscript, WATCHABLE_TOKENS } from '@/features/cue/data-access/parse-intent'
 import { assistantConfigured, type Draft, understand, understandAudio } from '@/features/cue/data-access/understand'
 import {
@@ -364,6 +365,7 @@ export function activateBuy(ownerAddress: string, signature: string, totalApprov
     status: 'Confirmed',
     title: `Rule set: buy ${plan.symbol} ${plan.direction} ${formatUsd(plan.targetUsd)}`,
   })
+  askBackgroundAccessOnce()
 }
 
 export function activateGuard(ownerAddress: string) {
@@ -384,6 +386,7 @@ export function activateGuard(ownerAddress: string) {
     status: 'Confirmed',
     title: plan.action === 'pause_activity' ? 'Guard on: pause' : 'Guard on: alert',
   })
+  askBackgroundAccessOnce()
 }
 
 /* ---------- wake word ---------- */

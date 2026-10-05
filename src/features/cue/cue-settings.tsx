@@ -2,7 +2,7 @@ import Ionicons from '@expo/vector-icons/Ionicons'
 import { useStore } from '@nanostores/react'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { Link } from 'expo-router'
-import { Pressable, ScrollView, View } from 'react-native'
+import { AppState, Pressable, ScrollView, View } from 'react-native'
 import Animated, {
   FadeInDown,
   FadeOutLeft,
@@ -12,7 +12,7 @@ import Animated, {
 } from 'react-native-reanimated'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 
 import { useAppCluster } from '@/features/cluster/data-access/cluster-provider'
@@ -25,6 +25,7 @@ import {
   stopBuyTriggers,
 } from '@/features/price-triggers/data-access/trigger-store'
 import { SPRING, useCue } from '@/features/cue/cue-theme'
+import { askBackgroundAccess, isBackgroundAllowed } from '@/features/cue/util/background-access'
 import { CuePage, Press, Row, Rows, SectionLabel, Segment, Txt } from '@/features/cue/ui/cue-ui'
 import { setTheme, type Theme, useTheme } from '@/features/shell/data-access/use-theme'
 import { executeDelegationRevoke } from '@/features/wallet/util/execute-delegation'
@@ -97,6 +98,28 @@ function RevokeButton() {
         </Txt>
       ) : null}
     </View>
+  )
+}
+
+/** Shows whether Android will keep Cue running with the screen off, and lets the user fix it. */
+function BackgroundRow() {
+  const [allowed, setAllowed] = useState(isBackgroundAllowed)
+  // The system dialog is a separate screen, so re-check when the app comes back to the front.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') setAllowed(isBackgroundAllowed())
+    })
+    return () => sub.remove()
+  }, [])
+  return (
+    <Pressable accessibilityRole="button" disabled={allowed} onPress={askBackgroundAccess}>
+      <Row
+        detail={allowed ? 'Rules keep running with the screen off' : 'Android may pause your rules. Tap to allow.'}
+        last
+        right={<Txt v="sub">{allowed ? 'On' : 'Allow'}</Txt>}
+        title="Run in background"
+      />
+    </Pressable>
   )
 }
 
@@ -183,6 +206,10 @@ export function CueSettings() {
         </Animated.View>
 
         <Animated.View entering={enter(2)}>
+          <SectionLabel>Background</SectionLabel>
+          <Rows>
+            <BackgroundRow />
+          </Rows>
           <SectionLabel>Listening</SectionLabel>
           <Rows>
             <Row
