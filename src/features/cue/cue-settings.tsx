@@ -26,6 +26,7 @@ import {
 } from '@/features/price-triggers/data-access/trigger-store'
 import { SPRING, useCue } from '@/features/cue/cue-theme'
 import { askBackgroundAccess, isBackgroundAllowed } from '@/features/cue/util/background-access'
+import { $spoken, setSpoken } from '@/features/cue/util/speech'
 import { CuePage, Press, Row, Rows, SectionLabel, Segment, Txt } from '@/features/cue/ui/cue-ui'
 import { setTheme, type Theme, useTheme } from '@/features/shell/data-access/use-theme'
 import { executeDelegationRevoke } from '@/features/wallet/util/execute-delegation'
@@ -170,6 +171,7 @@ export function CueSettings() {
   const { activeTheme } = useTheme()
   const { contacts, wake } = useStore($cue)
   const delegated = useStore($delegatedLamports)
+  const spoken = useStore($spoken)
   const buyRules = useStore($triggers).filter((t) => t.kind === 'buy' && t.status === 'active').length
   const { disconnect } = useMobileWallet()
 
@@ -214,9 +216,14 @@ export function CueSettings() {
           <Rows>
             <Row
               detail={'Say "Hey Cue" from anywhere'}
-              last
               right={<Toggle label="Wake word" on={wake} onPress={actions.toggleWake} />}
               title="Wake word"
+            />
+            <Row
+              detail="Cue says back what it understood"
+              last
+              right={<Toggle label="Spoken replies" on={spoken} onPress={() => setSpoken(!spoken)} />}
+              title="Spoken replies"
             />
           </Rows>
         </Animated.View>

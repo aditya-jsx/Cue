@@ -4,6 +4,8 @@ import { createMMKV } from 'react-native-mmkv'
 
 import { APP_STORAGE_ID } from '@/features/cluster/data-access/create-cluster-props'
 import { ensureMicPermission } from '@/features/cue/util/mic-permission'
+import { speak, stopSpeaking } from '@/features/cue/util/speech'
+import { spokenConfirm, spokenResult } from '@/features/cue/util/spoken'
 import { askBackgroundAccessOnce } from '@/features/cue/util/background-access'
 import { type Intent, normalizeTranscript, WATCHABLE_TOKENS } from '@/features/cue/data-access/parse-intent'
 import { assistantConfigured, type Draft, understand, understandAudio } from '@/features/cue/data-access/understand'
@@ -238,12 +240,17 @@ const stillListening = (ticket: number) => {
 function route(text: string, plan: Plan, draft: Draft | null) {
   $flow.set({ ...$flow.get(), draft, plan, signature: null, text })
   push(plan.kind === 'nope' ? 'nope' : 'confirm')
+  speak(spokenConfirm(plan)) // say it back, so a misheard amount or name is caught by ear
 }
 
 export const flow = {
   back: () => $flow.set({ ...$flow.get(), stack: $flow.get().stack.slice(0, -1) }),
-  cancel: () => $flow.set({ ...$flow.get(), stack: [] }),
-  done: () => flow.cancel(),
+  cancel() {
+    stopSpeaking()
+    $flow.set({ ...$flow.get(), stack: [] })
+  },
+  // Not cancel(): the "Sent…" line may still be playing, and Done shouldn't cut it off.
+  done: () => $flow.set({ ...$flow.get(), stack: [] }),
   /** Every spoken or tapped sentence ends here: understand, validate, route. */
   async finishListening(raw: string) {
     const text = normalizeTranscript(raw)
@@ -290,6 +297,7 @@ export const flow = {
   },
   openCompose(kind: ComposeKind) {
     if (!idle()) return
+    stopSpeaking()
     $flow.set({ ...$flow.get(), compose: kind, draft: null, live: false, stack: ['compose'] })
   },
   /** From a manual entry, back to the form; from speech, listen again. */
@@ -304,15 +312,17 @@ export const flow = {
     if (plan.kind === 'guard') $flow.set({ ...$flow.get(), plan: { ...plan, action } })
   },
   signed(signature?: string) {
+    const { plan, stack } = $flow.get()
     $flow.set({ ...$flow.get(), signature: signature ?? null })
     push('success')
+    if (stack[0] !== 'compose') speak(spokenResult(plan)) // only answer out loud to a voice command
   },
   /** Suggestion chip: plays the sentence through the listening screen, then the same path as speech. */
   startListening(text: string) {
     if (!idle()) return
+    stopSpeaking()
     $flow.set({ ...$flow.get(), live: false, signature: null, stack: ['listen'], text })
   },
-  /** Mic button or wake word. No-ops if a flow screen is already open, so a stray wake word can't interrupt it. */
   /** Voice can't work without the microphone: say so and offer Settings, instead of a silent "didn't catch that". */
   blockMic() {
     $flow.set({
@@ -324,8 +334,10 @@ export const flow = {
       text: '',
     })
   },
+  /** Mic button or wake word. No-ops if a flow screen is already open, so a stray wake word can't interrupt it. */
   async startLiveListening(source: 'mic' | 'wake' = 'mic') {
     if (!idle()) return
+    stopSpeaking() // the microphone is about to open: Cue must not record its own voice
     if (!(await ensureMicPermission())) {
       if (idle()) {
         $flow.set({ ...$flow.get(), signature: null, source, stack: ['listen'] })
