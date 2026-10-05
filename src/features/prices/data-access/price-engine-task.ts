@@ -39,7 +39,7 @@ AppRegistry.registerHeadlessTask('CueHeartbeat', () => async () => {
       const cluster = resolveActiveSolanaCluster(clusterCache)
       const client = createSolanaClient(cluster)
       await fetchPrices(client)
-      await evaluateTriggers(client, maxPriceAgeMs(cluster.id))
+      await evaluateTriggers(client, maxPriceAgeMs(cluster.id), cluster.id)
     } catch (error) {
       console.warn('[CuePriceEngine] Poll failed:', error)
     }

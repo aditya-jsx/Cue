@@ -30,6 +30,7 @@ import { $spoken, setSpoken } from '@/features/cue/util/speech'
 import { CuePage, Press, Row, Rows, SectionLabel, Segment, Txt } from '@/features/cue/ui/cue-ui'
 import { setTheme, type Theme, useTheme } from '@/features/shell/data-access/use-theme'
 import { executeDelegationRevoke } from '@/features/wallet/util/execute-delegation'
+import { returnSessionFunds } from '@/features/wallet/util/execute-swap'
 import { formatError } from '@/features/wallet/util/format-error'
 
 const THEMES: readonly Theme[] = ['dark', 'light', 'system']
@@ -60,6 +61,10 @@ function RevokeButton() {
       ])
       setDelegatedLamports(null)
       const stopped = stopBuyTriggers('Permission revoked')
+      // Whatever the session key still holds (a token it could not deliver, SOL it could not swap) goes back too.
+      await returnSessionFunds({ client, ownerAddress: account.address }).catch((e) =>
+        console.warn('[CueRevoke] Could not return the session key funds:', e),
+      )
       pushLogEntry({
         amount: '—',
         detail: `${stopped ? `Stopped ${stopped} buy rule${stopped === 1 ? '' : 's'}. ` : ''}Wrapped SOL returned to your wallet`,

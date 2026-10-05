@@ -20,6 +20,8 @@ import { isPriceFresh } from '@/features/prices/util/price-freshness'
 import { formatPct } from '@/features/price-triggers/util/format-pct'
 import { shouldFireTrigger } from '@/features/price-triggers/util/should-fire-trigger'
 import { executeAutonomousAction } from '@/features/wallet/util/execute-autonomous-action'
+import { executeSwapBuy, SwapNotStartedError } from '@/features/wallet/util/execute-swap'
+import { BUYABLE_TOKENS } from '@/features/wallet/util/tokens'
 import CueNative from '../../../../modules/cue-native'
 
 // Symbols whose feed is currently stale, so the log gets one entry per outage and not one every poll.
@@ -46,20 +48,25 @@ function isFresh(symbol: Symbol, point: PricePoint, maxAgeMs: number): boolean {
 }
 
 /** Checks every active rule against the latest prices; buys spend via the session key, guards alert or pause. */
-export async function evaluateTriggers(client: SolanaClient, maxPriceAgeMs: number): Promise<void> {
+export async function evaluateTriggers(client: SolanaClient, maxPriceAgeMs: number, clusterId: string): Promise<void> {
   const prices = $prices.get()
   for (const trigger of $triggers.get().filter((t) => t.status === 'active')) {
-    if (trigger.kind === 'buy') await evaluateBuy(client, trigger, prices[trigger.symbol], maxPriceAgeMs)
+    if (trigger.kind === 'buy') await evaluateBuy(client, trigger, prices, maxPriceAgeMs, clusterId)
     else evaluateGuard(trigger, prices.SOL, maxPriceAgeMs)
   }
 }
 
+// Buy rules already told the user why they are waiting, so a refused quote logs once and not every poll.
+const waitingBuys = new Set<string>()
+
 async function evaluateBuy(
   client: SolanaClient,
   trigger: BuyTrigger,
-  point: PricePoint | undefined,
+  prices: Partial<Record<Symbol, PricePoint>>,
   maxPriceAgeMs: number,
+  clusterId: string,
 ) {
+  const point = prices[trigger.symbol]
   const { title } = describeTrigger(trigger)
   if (trigger.expiresAt && Date.now() > trigger.expiresAt) {
     markTriggerExpired(trigger.id)
@@ -69,24 +76,57 @@ async function evaluateBuy(
   if (!point || !isFresh(trigger.symbol, point, maxPriceAgeMs)) return
   if (!shouldFireTrigger(trigger.direction, point.usd, trigger.targetUsd)) return
 
-  const spent = `${(Number(trigger.amountLamports) / 1e9).toFixed(4)} WSOL`
+  const owner = address(trigger.ownerAddress)
+  const lamports = BigInt(trigger.amountLamports)
+  const token = BUYABLE_TOKENS[trigger.symbol]
+  const sol = prices.SOL
+  // A real swap on mainnet; anywhere else (devnet has no liquidity) the stand-in moves WSOL to the session key.
+  const realSwap = clusterId === 'solana:mainnet' && token !== undefined
+  if (realSwap && (!sol || !isFresh('SOL', sol, maxPriceAgeMs))) return
+
   try {
-    const result = await executeAutonomousAction({
-      client,
-      ownerAddress: address(trigger.ownerAddress),
-      transferLamports: BigInt(trigger.amountLamports),
-    })
-    markTriggerFired(trigger.id, result.signature)
-    spendDelegation(BigInt(trigger.amountLamports))
+    let signature: string
+    let amount = `${(Number(lamports) / 1e9).toFixed(4)} WSOL`
+    if (realSwap) {
+      const swap = await executeSwapBuy({
+        amountLamports: lamports,
+        client,
+        ownerAddress: owner,
+        solUsd: sol!.usd,
+        symbol: trigger.symbol,
+        tokenUsd: point.usd,
+      })
+      signature = swap.swapSignature
+      amount = `${(Number(swap.received) / 10 ** token.decimals).toLocaleString(undefined, { maximumFractionDigits: 4 })} ${trigger.symbol}`
+    } else {
+      signature = (await executeAutonomousAction({ client, ownerAddress: owner, transferLamports: lamports })).signature
+    }
+    waitingBuys.delete(trigger.id)
+    markTriggerFired(trigger.id, signature)
+    spendDelegation(lamports)
     pushLogEntry({
-      amount: spent,
+      amount,
       detail: `${trigger.symbol} hit ${formatUsd(point.usd)}`,
-      signature: result.signature,
+      signature,
       status: 'Confirmed',
       title: `Bought: ${title}`,
     })
     CueNative.notify('Cue bought for you', `${title} — ${trigger.symbol} is at ${formatUsd(point.usd)}.`)
   } catch (error) {
+    if (error instanceof SwapNotStartedError) {
+      // Turned away before any money moved (the quote was off the market price, or Jupiter was unreachable): the rule
+      // stays active and tries again on the next price check.
+      if (!waitingBuys.has(trigger.id)) {
+        waitingBuys.add(trigger.id)
+        pushLogEntry({
+          amount: '—',
+          detail: `${error.message} Cue will try again.`,
+          status: 'Alert',
+          title: `Waiting: ${title}`,
+        })
+      }
+      return
+    }
     const message = error instanceof Error ? error.message : String(error)
     markTriggerFailed(trigger.id, message)
     pushLogEntry({ amount: '—', detail: message, status: 'Alert', title: `Couldn't buy: ${title}` })
