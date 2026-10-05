@@ -127,6 +127,12 @@ export function setDelegatedLamports(lamports: bigint | null) {
   $delegatedLamports.set(lamports)
 }
 
+/** A buy spent `lamports` of the on-chain allowance, so less is left to spend. */
+export function spendDelegation(lamports: bigint) {
+  const left = $delegatedLamports.get()
+  if (left !== null) setDelegatedLamports(left > lamports ? left - lamports : 0n)
+}
+
 export const formatUsd = (n: number) => `$${n >= 1 ? n.toFixed(2) : n.toFixed(4).replace(/0{1,2}$/, '')}`
 
 export function describeTrigger(t: PriceTrigger): { detail: string; title: string } {

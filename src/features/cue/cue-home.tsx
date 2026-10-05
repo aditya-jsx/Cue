@@ -1,7 +1,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons'
 import { useStore } from '@nanostores/react'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
-import { ScrollView, View } from 'react-native'
+import { Alert, ScrollView, View } from 'react-native'
 import Animated, { FadeInDown, LinearTransition } from 'react-native-reanimated'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
@@ -19,6 +19,13 @@ const MANUAL = [
   { icon: 'trending-down-outline', kind: 'buy', label: 'Buy' },
   { icon: 'shield-checkmark-outline', kind: 'guard', label: 'Guard' },
 ] as const
+
+function confirmCancel(id: string, title: string) {
+  Alert.alert('Cancel this rule?', title, [
+    { style: 'cancel', text: 'Keep it' },
+    { onPress: () => cancelTrigger(id), style: 'destructive', text: 'Cancel rule' },
+  ])
+}
 
 function formatSol(lamports: bigint) {
   const whole = lamports / LAMPORTS
@@ -94,7 +101,10 @@ export function CueHome() {
                     detail={describeTrigger(r).detail}
                     last={i === rules.length - 1}
                     right={
-                      <Press label={`Cancel ${describeTrigger(r).title}`} onPress={() => cancelTrigger(r.id)}>
+                      <Press
+                        label={`Cancel ${describeTrigger(r).title}`}
+                        onPress={() => confirmCancel(r.id, describeTrigger(r).title)}
+                      >
                         <Ionicons color={c.muted} name="close-circle" size={22} />
                       </Press>
                     }

@@ -1,4 +1,4 @@
-// Local stand-in for the LLM parser. Emits exactly the schema in docs/brief.md.
+// Offline fallback for the AI parser (the server asks Gemini; this runs when it can't be reached). Emits the schema in docs/brief.md.
 // Erasable TS only (no enums, no imports) so scripts/check-parse-intent.mjs can run it directly under node.
 export type Intent =
   | { amount: number; intent: 'instant_send'; recipient: string; token: string }

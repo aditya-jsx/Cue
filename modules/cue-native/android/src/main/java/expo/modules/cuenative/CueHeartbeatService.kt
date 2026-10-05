@@ -11,16 +11,16 @@ import com.facebook.react.HeadlessJsTaskService
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.jstasks.HeadlessJsTaskConfig
 
-// Spike: foreground service that keeps a headless JS task ("CueHeartbeat") alive so JS timers
-// and fetch keep running while the app is backgrounded. Real version will use type=microphone.
+// Foreground service that keeps the headless JS task ("CueHeartbeat") alive, so price checks and the rules that
+// depend on them keep running while the app is backgrounded.
 class CueHeartbeatService : HeadlessJsTaskService() {
-  @SuppressLint("NewApi") // ponytail: spike targets API 26+, real service must handle minSdk 24
+  @SuppressLint("NewApi") // ponytail: assumes API 26+ (notification channels); handle minSdk 24 if the app ever supports it
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     val nm = getSystemService(NotificationManager::class.java)
     nm.createNotificationChannel(NotificationChannel(CHANNEL, "Cue agent", NotificationManager.IMPORTANCE_LOW))
     val notification: Notification = Notification.Builder(this, CHANNEL)
-      .setContentTitle("Cue is running")
-      .setContentText("Background agent spike")
+      .setContentTitle("Cue is watching prices")
+      .setContentText("Your rules keep running in the background")
       .setSmallIcon(android.R.drawable.ic_dialog_info)
       .setOngoing(true)
       .build()

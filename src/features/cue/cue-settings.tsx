@@ -234,8 +234,12 @@ export function CueSettings() {
         <Animated.View entering={enter(5)}>
           <SectionLabel>App</SectionLabel>
           <Rows>
-            <LinkRow href="/settings/cluster" label="Network" />
-            <LinkRow href="/tools" label="Developer tools" />
+            {__DEV__ ? (
+              <>
+                <LinkRow href="/settings/cluster" label="Network" />
+                <LinkRow href="/tools" label="Developer tools" />
+              </>
+            ) : null}
             <Pressable accessibilityRole="button" onPress={() => void disconnect()}>
               <Row last title="Disconnect wallet" />
             </Pressable>

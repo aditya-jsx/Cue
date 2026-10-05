@@ -18,7 +18,7 @@ import {
   NATIVE_MINT_ADDRESS,
 } from '@/features/wallet/util/spl-token'
 
-const DEFAULT_TRANSFER_LAMPORTS = 10_000_000n // 0.01 WSOL, well inside the 0.05 WSOL approved cap
+const DEFAULT_TRANSFER_LAMPORTS = 10_000_000n // 0.01 WSOL, used by the Developer tools test action
 
 export interface ExecuteAutonomousActionResult {
   destinationAta: Address

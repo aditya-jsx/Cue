@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict'
 
 import { shouldFireTrigger } from '../src/features/price-triggers/util/should-fire-trigger.ts'
+import { formatPct } from '../src/features/price-triggers/util/format-pct.ts'
 import { isPriceFresh, maxPriceAgeMs } from '../src/features/prices/util/price-freshness.ts'
 
 // "below" fires when price has dropped to or under the target; "above" fires when it's risen to or over it.
@@ -23,5 +24,11 @@ assert.equal(maxPriceAgeMs('solana:devnet'), 600_000)
 assert.equal(maxPriceAgeMs('solana:testnet'), 600_000)
 assert.ok(maxPriceAgeMs('solana:devnet') > 5 * 60_000, 'devnet limit must exceed its ~5 min update cadence')
 assert.ok(maxPriceAgeMs('solana:mainnet') > 60_000, 'mainnet limit must exceed its ~1 min update cadence')
+
+// Percent display: a tiny drop must not collapse to "0.0%".
+assert.equal(formatPct(0.03), '0.03%')
+assert.equal(formatPct(0.2), '0.20%')
+assert.equal(formatPct(1), '1.0%')
+assert.equal(formatPct(10.04), '10.0%')
 
 console.log('evaluate-triggers: all checks passed')

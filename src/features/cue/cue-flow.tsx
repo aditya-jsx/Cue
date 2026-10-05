@@ -79,7 +79,7 @@ export function CueFlow() {
     <View pointerEvents={stack.length ? 'auto' : 'none'} style={StyleSheet.absoluteFill}>
       {has('compose') && !has('confirm') && !has('nope') ? <Compose key="compose" /> : null}
       {has('contact') ? <AddContact key="contact" /> : null}
-      {has('listen') ? <Listening key="listen" /> : null}
+      {has('listen') ? <Listening covered={has('confirm') || has('nope')} key="listen" /> : null}
       {has('confirm') ? <Confirm key="confirm" /> : null}
       {has('nope') ? <NotSupported key="nope" /> : null}
       {has('delegate') ? <Delegate key="delegate" /> : null}
@@ -122,7 +122,7 @@ function Phase({ thinking }: { thinking: boolean }) {
   )
 }
 
-function Listening() {
+function Listening({ covered }: { covered: boolean }) {
   const c = useCue()
   const insets = useSafeAreaInsets()
   const { height } = useWindowDimensions()
@@ -130,6 +130,8 @@ function Listening() {
   const words = text.split(' ').filter(Boolean)
   const [shown, setShown] = useState(0)
   const [thinking, setThinking] = useState(false)
+  // A sheet slides over this screen, and its glass is see-through, so the listening content fades out beneath it.
+  const fade = useAnimatedStyle(() => ({ opacity: withTiming(covered ? 0 : 1, { duration: 450 }) }))
 
   // Scripted phrase: reveal word-by-word on a fixed timer, then auto-parse.
   useEffect(() => {
@@ -231,51 +233,53 @@ function Listening() {
       style={[StyleSheet.absoluteFill, { backgroundColor: c.bg }]}
     >
       <Backdrop />
-      <View style={{ left: 0, position: 'absolute', right: 0, top: at(118) }}>
-        <Phase thinking={thinking} />
-      </View>
-      <View style={{ alignItems: 'center', left: 0, position: 'absolute', right: 0, top: at(190) }}>
-        <View style={{ alignItems: 'center', height: 200, justifyContent: 'center', width: 200 }}>
-          <Ring duration={2400} from={0.4} size={248} />
-          <Glass radius={100} style={{ alignItems: 'center', height: 200, justifyContent: 'center', width: 200 }}>
-            <View style={{ alignItems: 'center', flexDirection: 'row', gap: 5 }}>
-              {Array.from({ length: 19 }, (_, i) => (
-                <Bar fast={thinking} h={18 + Math.round(Math.abs(Math.sin(i * 1.3)) * 64)} i={i} key={i} />
-              ))}
-            </View>
-          </Glass>
+      <Animated.View pointerEvents={covered ? 'none' : 'auto'} style={[StyleSheet.absoluteFill, fade]}>
+        <View style={{ left: 0, position: 'absolute', right: 0, top: at(118) }}>
+          <Phase thinking={thinking} />
         </View>
-      </View>
-      <View
-        style={{
-          flexDirection: 'row',
-          flexWrap: 'wrap',
-          justifyContent: 'center',
-          left: 28,
-          minHeight: 100,
-          position: 'absolute',
-          right: 28,
-          top: at(470),
-        }}
-      >
-        {visibleWords.length === 0 && notice ? (
-          <Txt style={{ textAlign: 'center' }} v="sub">
-            {notice}
-          </Txt>
-        ) : null}
-        {visibleWords.map((w, i) => (
-          <Animated.Text
-            entering={FadeInDown.duration(300)}
-            key={i}
-            style={{ color: c.text, fontSize: 26, fontWeight: '600', letterSpacing: -0.65, lineHeight: 32.5 }}
-          >
-            {w}{' '}
-          </Animated.Text>
-        ))}
-      </View>
-      <View style={{ bottom: insets.bottom + 24, left: 20, position: 'absolute', right: 20 }}>
-        <CueButton label="Cancel" onPress={flow.cancel} variant="glass" />
-      </View>
+        <View style={{ alignItems: 'center', left: 0, position: 'absolute', right: 0, top: at(190) }}>
+          <View style={{ alignItems: 'center', height: 200, justifyContent: 'center', width: 200 }}>
+            <Ring duration={2400} from={0.4} size={248} />
+            <Glass radius={100} style={{ alignItems: 'center', height: 200, justifyContent: 'center', width: 200 }}>
+              <View style={{ alignItems: 'center', flexDirection: 'row', gap: 5 }}>
+                {Array.from({ length: 19 }, (_, i) => (
+                  <Bar fast={thinking} h={18 + Math.round(Math.abs(Math.sin(i * 1.3)) * 64)} i={i} key={i} />
+                ))}
+              </View>
+            </Glass>
+          </View>
+        </View>
+        <View
+          style={{
+            flexDirection: 'row',
+            flexWrap: 'wrap',
+            justifyContent: 'center',
+            left: 28,
+            minHeight: 100,
+            position: 'absolute',
+            right: 28,
+            top: at(470),
+          }}
+        >
+          {visibleWords.length === 0 && notice ? (
+            <Txt style={{ textAlign: 'center' }} v="sub">
+              {notice}
+            </Txt>
+          ) : null}
+          {visibleWords.map((w, i) => (
+            <Animated.Text
+              entering={FadeInDown.duration(300)}
+              key={i}
+              style={{ color: c.text, fontSize: 26, fontWeight: '600', letterSpacing: -0.65, lineHeight: 32.5 }}
+            >
+              {w}{' '}
+            </Animated.Text>
+          ))}
+        </View>
+        <View style={{ bottom: insets.bottom + 24, left: 20, position: 'absolute', right: 20 }}>
+          <CueButton label="Cancel" onPress={flow.cancel} variant="glass" />
+        </View>
+      </Animated.View>
     </Animated.View>
   )
 }

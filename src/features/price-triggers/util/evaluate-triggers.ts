@@ -12,10 +12,12 @@ import {
   markTriggerFailed,
   markTriggerFired,
   rebaselineGuard,
+  spendDelegation,
   stopBuyTriggers,
 } from '@/features/price-triggers/data-access/trigger-store'
 import { $prices, type PricePoint, type Symbol } from '@/features/prices/data-access/price-store'
 import { isPriceFresh } from '@/features/prices/util/price-freshness'
+import { formatPct } from '@/features/price-triggers/util/format-pct'
 import { shouldFireTrigger } from '@/features/price-triggers/util/should-fire-trigger'
 import { executeAutonomousAction } from '@/features/wallet/util/execute-autonomous-action'
 import CueNative from '../../../../modules/cue-native'
@@ -75,6 +77,7 @@ async function evaluateBuy(
       transferLamports: BigInt(trigger.amountLamports),
     })
     markTriggerFired(trigger.id, result.signature)
+    spendDelegation(BigInt(trigger.amountLamports))
     pushLogEntry({
       amount: spent,
       detail: `${trigger.symbol} hit ${formatUsd(point.usd)}`,
@@ -105,9 +108,9 @@ function evaluateGuard(trigger: GuardTrigger, sol: PricePoint | undefined, maxPr
   // The wallet holds SOL, so a SOL price drop is the portfolio drop (the user's own transfers aren't a market move).
   markTriggerFired(trigger.id)
   const paused = trigger.action === 'pause_activity' ? stopBuyTriggers('Paused by Portfolio Guard') : 0
-  const detail = `SOL fell ${dropPct.toFixed(1)}% to ${formatUsd(sol.usd)}${
+  const detail = `SOL fell ${formatPct(dropPct)} to ${formatUsd(sol.usd)}${
     trigger.action === 'pause_activity' ? ` — paused ${paused} buy rule${paused === 1 ? '' : 's'}` : ''
   }`
-  pushLogEntry({ amount: `-${dropPct.toFixed(1)}%`, detail, status: 'Alert', title: 'Guard triggered' })
+  pushLogEntry({ amount: `-${formatPct(dropPct)}`, detail, status: 'Alert', title: 'Guard triggered' })
   CueNative.notify('Portfolio Guard triggered', detail)
 }
