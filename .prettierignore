@@ -9,3 +9,6 @@ pnpm-lock.yaml
 .agents
 agent
 src/uniwind-types.d.ts
+
+# local Vercel link, not part of the repo
+server/.vercel

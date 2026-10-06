@@ -1,6 +1,6 @@
 import { ApiError, GoogleGenAI, ThinkingLevel } from '@google/genai'
 
-import { checkLimits, identify, memoryStore, rulesFor, upstashStore } from '../lib/rate-limit'
+import { checkLimits, identify, memoryStore, rulesFor, upstashStore } from '../lib/rate-limit.js'
 
 // Turns a spoken wallet command into Cue's intent JSON. The command arrives as an audio clip (Gemini does the
 // hearing) or as text (suggestion chips, or a transcript from the offline fallback). Only parses: the app
