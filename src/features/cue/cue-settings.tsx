@@ -2,7 +2,7 @@ import Ionicons from '@expo/vector-icons/Ionicons'
 import { useStore } from '@nanostores/react'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { Link } from 'expo-router'
-import { AppState, Pressable, ScrollView, View } from 'react-native'
+import { Alert, AppState, Pressable, ScrollView, View } from 'react-native'
 import Animated, {
   FadeInDown,
   FadeOutLeft,
@@ -27,6 +27,7 @@ import {
 import { SPRING, useCue } from '@/features/cue/cue-theme'
 import { askBackgroundAccess, isBackgroundAllowed } from '@/features/cue/util/background-access'
 import { resetOnboarding } from '@/features/cue/data-access/onboarding'
+import { deleteAllCueData } from '@/features/cue/util/delete-data'
 import { $spoken, setSpoken } from '@/features/cue/util/speech'
 import { CuePage, Press, Row, Rows, SectionLabel, Segment, Txt } from '@/features/cue/ui/cue-ui'
 import { setTheme, type Theme, useTheme } from '@/features/shell/data-access/use-theme'
@@ -171,6 +172,33 @@ function LinkRow({ href, label }: { href: '/settings/cluster' | '/tools'; label:
   )
 }
 
+/** Wipes Cue's data from this phone, after explaining what it does and doesn't remove. */
+function confirmDeleteData(hasPermission: boolean, disconnect: () => Promise<void>) {
+  if (hasPermission) {
+    Alert.alert(
+      'Revoke your permission first',
+      'Cue still has permission to spend for your buy rules. Revoke it under Permissions, then delete your data.',
+    )
+    return
+  }
+  Alert.alert(
+    'Delete my data?',
+    "This removes your contacts, activity, rules and settings from this phone and disconnects your wallet. It doesn't move any funds.",
+    [
+      { style: 'cancel', text: 'Keep it' },
+      {
+        onPress: () => {
+          void deleteAllCueData()
+            .then(() => disconnect())
+            .catch((e) => console.warn('[CueDelete] failed', e))
+        },
+        style: 'destructive',
+        text: 'Delete',
+      },
+    ],
+  )
+}
+
 export function CueSettings() {
   const c = useCue()
   const insets = useSafeAreaInsets()
@@ -283,6 +311,9 @@ export function CueSettings() {
                 </Pressable>
               </>
             ) : null}
+            <Pressable accessibilityRole="button" onPress={() => confirmDeleteData(delegated !== null, disconnect)}>
+              <Row detail="Removes your contacts, activity and rules from this phone" title="Delete my data" />
+            </Pressable>
             <Pressable accessibilityRole="button" onPress={() => void disconnect()}>
               <Row last title="Disconnect wallet" />
             </Pressable>
