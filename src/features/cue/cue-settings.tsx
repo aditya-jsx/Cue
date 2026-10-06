@@ -26,6 +26,7 @@ import {
 } from '@/features/price-triggers/data-access/trigger-store'
 import { SPRING, useCue } from '@/features/cue/cue-theme'
 import { askBackgroundAccess, isBackgroundAllowed } from '@/features/cue/util/background-access'
+import { resetOnboarding } from '@/features/cue/data-access/onboarding'
 import { $spoken, setSpoken } from '@/features/cue/util/speech'
 import { CuePage, Press, Row, Rows, SectionLabel, Segment, Txt } from '@/features/cue/ui/cue-ui'
 import { setTheme, type Theme, useTheme } from '@/features/shell/data-access/use-theme'
@@ -277,6 +278,9 @@ export function CueSettings() {
               <>
                 <LinkRow href="/settings/cluster" label="Network" />
                 <LinkRow href="/tools" label="Developer tools" />
+                <Pressable accessibilityRole="button" onPress={resetOnboarding}>
+                  <Row title="Show introduction again" />
+                </Pressable>
               </>
             ) : null}
             <Pressable accessibilityRole="button" onPress={() => void disconnect()}>

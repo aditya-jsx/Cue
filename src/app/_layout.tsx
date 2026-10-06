@@ -1,10 +1,13 @@
 import '../global.css'
 
 import { Tabs } from 'expo-router/js-tabs'
+import { useStore } from '@nanostores/react'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { useEffect } from 'react'
 import { View } from 'react-native'
 import { CueConnect } from '@/features/cue/cue-connect'
+import { CueOnboarding } from '@/features/cue/cue-onboarding'
+import { $onboarded } from '@/features/cue/data-access/onboarding'
 import { CueFlow } from '@/features/cue/cue-flow'
 import { CueTabBar } from '@/features/cue/cue-tab-bar'
 import { flow } from '@/features/cue/data-access/cue-store'
@@ -15,7 +18,11 @@ import { startPriceEngine } from '@/features/prices/util/start-price-engine'
 import CueNative from '../../modules/cue-native'
 
 export default function Layout() {
+  const onboarded = useStore($onboarded)
   useEffect(() => {
+    // The background services wait for onboarding, so no permission prompt or notification appears before Cue has
+    // explained itself.
+    if (!onboarded) return
     startPriceEngine().catch((e) => console.warn('[CuePriceEngine] start failed', e))
     startWakeWord().catch((e) => console.warn('[CueWakeWord] start failed', e))
 
@@ -26,7 +33,7 @@ export default function Layout() {
     // Opened by "Hey Cue" from the background or a locked screen: the event fired before this listener existed.
     if (CueNative.consumePendingWake()) void flow.startLiveListening('wake')
     return () => subscription.remove()
-  }, [])
+  }, [onboarded])
 
   return (
     <AppProviders>
@@ -38,6 +45,11 @@ export default function Layout() {
 function AppTabs() {
   const { account } = useMobileWallet()
   const { backgroundColor } = useTheme()
+  const onboarded = useStore($onboarded)
+
+  if (!onboarded) {
+    return <CueOnboarding />
+  }
 
   if (!account) {
     return <CueConnect />
