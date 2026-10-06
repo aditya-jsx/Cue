@@ -56,10 +56,15 @@ vercel deploy --prod
 
 Set these in the Vercel project's environment variables:
 
-| Variable           | Purpose                                                                   |
-| ------------------ | ------------------------------------------------------------------------- |
-| `GEMINI_API_KEY`   | Google AI Studio key. The free tier has a small daily quota, fine for dev |
-| `CUE_CLIENT_TOKEN` | Same value as `EXPO_PUBLIC_CUE_CLIENT_TOKEN` in the app's `.env`          |
+| Variable                                             | Purpose                                                                                                     |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `GEMINI_API_KEY`                                     | Google AI Studio key. Turn on billing for its project before real use: the free tier's daily quota is small |
+| `CUE_CLIENT_TOKEN`                                   | Same value as `EXPO_PUBLIC_CUE_CLIENT_TOKEN` in the app's `.env`                                            |
+| `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | Optional. Makes the rate limits exact across all instances (without it they are best effort)                |
+| `CUE_DAILY_BUDGET`                                   | Optional. Most requests accepted per day in total (default 5000), a ceiling on the Gemini bill              |
+| `GEMINI_MODELS`                                      | Optional. Comma-separated models to try in order, to swap one Google retires without a code change          |
+
+Each install is limited to 20 requests a minute and 400 a day, and each IP address to 120 a minute and 2000 a day.
 
 Then put the deployment URL in the app's `EXPO_PUBLIC_CUE_API_URL`.
 

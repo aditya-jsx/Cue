@@ -8,7 +8,14 @@ import { speak, stopSpeaking } from '@/features/cue/util/speech'
 import { spokenConfirm, spokenResult } from '@/features/cue/util/spoken'
 import { askBackgroundAccessOnce } from '@/features/cue/util/background-access'
 import { type Intent, normalizeTranscript, WATCHABLE_TOKENS } from '@/features/cue/data-access/parse-intent'
-import { assistantConfigured, type Draft, understand, understandAudio } from '@/features/cue/data-access/understand'
+import { getDeviceId } from '@/features/cue/data-access/device-id'
+import {
+  assistantConfigured,
+  type Draft,
+  setDeviceIdSource,
+  understand,
+  understandAudio,
+} from '@/features/cue/data-access/understand'
 import {
   createTrigger,
   formatUsd,
@@ -61,6 +68,8 @@ const HOUR = 3_600_000
 const DAY = 24 * HOUR
 const MAX_RULE_USD = 50
 const LOADING_PRICES = "I'm still loading live prices. Try again in a few seconds."
+
+setDeviceIdSource(getDeviceId)
 
 const storage = createMMKV({ id: APP_STORAGE_ID })
 const LOG_KEY = 'cue:activity-log'

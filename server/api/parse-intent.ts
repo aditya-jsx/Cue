@@ -1,5 +1,7 @@
 import { ApiError, GoogleGenAI, ThinkingLevel } from '@google/genai'
 
+import { checkLimits, identify, memoryStore, rulesFor, upstashStore } from '../lib/rate-limit'
+
 // Turns a spoken wallet command into Cue's intent JSON. The command arrives as an audio clip (Gemini does the
 // hearing) or as text (suggestion chips, or a transcript from the offline fallback). Only parses: the app
 // re-validates every field and shows a confirm screen before anything executes, so this endpoint never touches
@@ -111,11 +113,31 @@ const strings = (value: unknown, max: number) =>
         .slice(0, max)
     : []
 
+// Rate-limit counters live in Upstash Redis when it is configured (shared by every instance), else in memory.
+const upstashUrl = process.env.UPSTASH_REDIS_REST_URL ?? process.env.KV_REST_API_URL
+const upstashToken = process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.KV_REST_API_TOKEN
+const memory = memoryStore()
+const counters = upstashUrl && upstashToken ? upstashStore(upstashUrl, upstashToken) : memory
+const MAX_BODY_BYTES = 2_000_000
+const NO_STORE = { 'cache-control': 'no-store' }
+
 export async function POST(request: Request): Promise<Response> {
-  // ponytail: a shared token only raises the bar (it ships inside the APK); add per-device rate limiting before a
-  // public launch so nobody can run up the Gemini bill through this endpoint.
+  // ponytail: this shared token only raises the bar (it ships inside the APK); the rate limits below are what stop
+  // anyone running up the Gemini bill through this endpoint.
   const token = process.env.CUE_CLIENT_TOKEN
   if (token && request.headers.get('x-cue-client') !== token) return new Response('Forbidden', { status: 403 })
+
+  if (Number(request.headers.get('content-length')) > MAX_BODY_BYTES) return new Response('Too large', { status: 413 })
+  const identity = identify(request.headers)
+  const rules = rulesFor(Number(process.env.CUE_DAILY_BUDGET) || 5000)
+  const verdict = await checkLimits(counters, identity, rules).catch((error) => {
+    console.warn('[parse-intent] rate-limit store failed, counting in memory', String(error))
+    return checkLimits(memory, identity, rules)
+  })
+  if (!verdict.ok) {
+    console.warn('[parse-intent] rate limited', verdict.rule)
+    return new Response('Slow down', { headers: { 'retry-after': String(verdict.retryAfterSec) }, status: 429 })
+  }
 
   const body = (await request.json().catch(() => null)) as {
     audio?: unknown
@@ -154,9 +176,12 @@ export async function POST(request: Request): Promise<Response> {
     temperature: 0,
   }
   // Gemini answers "503 high demand" in bursts: retry briefly, and on the last try use the lighter model.
-  const MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash', 'gemini-3.5-flash-lite']
+  // Set GEMINI_MODELS (comma-separated) to swap a retired model without a code change.
+  const MODELS = (process.env.GEMINI_MODELS ?? 'gemini-2.5-flash,gemini-2.5-flash,gemini-3.5-flash-lite')
+    .split(',')
+    .map((m: string) => m.trim())
+    .filter(Boolean)
 
-  const attempts: string[] = []
   try {
     let response!: Awaited<ReturnType<typeof ai.models.generateContent>>
     for (let attempt = 0; attempt < MODELS.length; attempt++) {
@@ -174,9 +199,6 @@ export async function POST(request: Request): Promise<Response> {
         })
         break
       } catch (error) {
-        attempts.push(
-          `${MODELS[attempt]}: ${error instanceof ApiError ? `${error.status} ${error.message.slice(0, 120)}` : String(error)}`,
-        )
         console.warn(
           '[parse-intent] attempt',
           attempt,
@@ -193,13 +215,12 @@ export async function POST(request: Request): Promise<Response> {
       return UNSUPPORTED("I couldn't work that out. Try saying it another way.")
     }
     const result = toCueIntent(JSON.parse(response.text) as Raw)
-    return Response.json(audio ? result : { ...result, transcript: text })
+    return Response.json(audio ? result : { ...result, transcript: text }, { headers: NO_STORE })
   } catch (error) {
     if (error instanceof ApiError) {
       console.error('[parse-intent] Gemini error', error.status, error.message)
-      return new Response(`Upstream ${error.status}: ${error.message} | attempts: ${attempts.join(' ; ')}`, {
-        status: error.status === 429 ? 429 : 502,
-      })
+      // The details stay in the server log; the caller only learns that the assistant is unavailable.
+      return new Response('Assistant unavailable', { status: error.status === 429 ? 429 : 502 })
     }
     throw error
   }

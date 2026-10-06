@@ -82,6 +82,19 @@ export function toIntent(raw: unknown): Intent | null {
   return null
 }
 
+// This install's id, sent so the server can rate-limit per device. The app registers where to read it from at
+// startup, which keeps this file free of app imports so scripts/check-parse-intent.mjs can load it in plain Node.
+let deviceId = () => ''
+export const setDeviceIdSource = (source: () => string) => {
+  deviceId = source
+}
+
+const requestHeaders = () => ({
+  'content-type': 'application/json',
+  'x-cue-client': CLIENT_TOKEN,
+  'x-cue-device': deviceId(),
+})
+
 /**
  * The understanding layer: Claude (via Cue's proxy) reads the raw transcript with the user's contacts as context and
  * returns an intent. Offline, timed out, or unconfigured, the local parser takes over so the app never goes dead.
@@ -107,7 +120,7 @@ export async function understand(
         text: normalizeTranscript(transcript),
         tokens: WATCHABLE_TOKENS,
       }),
-      headers: { 'content-type': 'application/json', 'x-cue-client': CLIENT_TOKEN },
+      headers: requestHeaders(),
       method: 'POST',
       signal: abort.signal,
     })
@@ -138,7 +151,7 @@ export async function understandAudio(
   try {
     const response = await fetch(`${API_URL}/api/parse-intent`, {
       body: JSON.stringify({ audio: wavBase64, contacts, mimeType: 'audio/wav', tokens: WATCHABLE_TOKENS }),
-      headers: { 'content-type': 'application/json', 'x-cue-client': CLIENT_TOKEN },
+      headers: requestHeaders(),
       method: 'POST',
       signal: abort.signal,
     })
