@@ -20,9 +20,9 @@ assert.equal(isPriceFresh(now - 60_000, now, 60_000), true) // exactly at the li
 assert.equal(isPriceFresh(now - 60_001, now, 60_000), false)
 assert.equal(isPriceFresh(now + 5_000, now, 60_000), true) // a slightly fast clock must not block rules
 assert.equal(maxPriceAgeMs('solana:mainnet'), 180_000)
-assert.equal(maxPriceAgeMs('solana:devnet'), 600_000)
-assert.equal(maxPriceAgeMs('solana:testnet'), 600_000)
-assert.ok(maxPriceAgeMs('solana:devnet') > 5 * 60_000, 'devnet limit must exceed its ~5 min update cadence')
+assert.equal(maxPriceAgeMs('solana:devnet'), 75 * 60_000)
+assert.equal(maxPriceAgeMs('solana:testnet'), 75 * 60_000)
+assert.ok(maxPriceAgeMs('solana:devnet') > 60 * 60_000, "devnet limit must exceed the feeds' hour-long heartbeat")
 assert.ok(maxPriceAgeMs('solana:mainnet') > 60_000, 'mainnet limit must exceed its ~1 min update cadence')
 
 // Percent display: a tiny drop must not collapse to "0.0%".
