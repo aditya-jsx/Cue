@@ -1,5 +1,6 @@
 import {
   type Address,
+  type Instruction,
   appendTransactionMessageInstructions,
   compileTransaction,
   createTransactionMessage,
@@ -17,6 +18,7 @@ import { getSessionKey } from '@/features/cue/data-access/session-key'
 import { checkSwapQuote } from '@/features/wallet/util/check-swap-quote'
 import { executeAutonomousAction } from '@/features/wallet/util/execute-autonomous-action'
 import { fetchQuote, fetchSwap } from '@/features/wallet/util/jupiter'
+import { getTransferSolInstruction } from '@/features/wallet/util/get-transfer-sol-instruction'
 import { sendAndConfirm } from '@/features/wallet/util/send-signed-transaction'
 import {
   findAtaAddress,
@@ -28,6 +30,7 @@ import {
 import { BUYABLE_TOKENS } from '@/features/wallet/util/tokens'
 
 const SLIPPAGE_BPS = 50 // 0.5%
+const ONE_SIGNATURE_FEE = 5_000n // lamports for a one-signer transaction with no priority fee
 
 /** The buy was turned away before any money moved (bad price, no quote, network). Safe to try again later. */
 export class SwapNotStartedError extends Error {}
@@ -164,8 +167,9 @@ export async function executeSwapBuy({
 }
 
 /**
- * Sends anything left with the session key back to the user: tokens it bought but could not deliver, and wrapped
- * SOL it moved but could not swap (closing its account returns that as SOL). Safe to call when nothing is held.
+ * Sends everything the session key holds back to the user: tokens it bought but could not deliver, wrapped SOL it moved
+ * but could not swap (closing its account returns that as SOL), and the SOL it was given for gas. It must run while the
+ * key still exists, so Revoke calls it before deleting the key. Safe to call when nothing is held.
  */
 export async function returnSessionFunds({
   client,
@@ -184,9 +188,25 @@ export async function returnSessionFunds({
     .getAccountInfo(sessionWsolAta, { commitment: 'confirmed', encoding: 'base64' })
     .send()
     .then((r) => r.value !== null)
+  // The SOL it was given for gas goes back too, less the fee of this one transaction, so it ends with nothing.
+  const lamports = await client.rpc
+    .getBalance(sessionKey.address, { commitment: 'confirmed' })
+    .send()
+    .then((r) => r.value)
+  const instructions: Instruction[] = []
   if (exists) {
-    await sendAsSessionKey(client, [
+    instructions.push(
       getCloseAccountInstruction({ destination: ownerAddress, owner: sessionKey.address, source: sessionWsolAta }),
-    ])
+    )
   }
+  if (lamports > ONE_SIGNATURE_FEE) {
+    instructions.push(
+      getTransferSolInstruction({
+        amount: lamports - ONE_SIGNATURE_FEE,
+        destination: ownerAddress,
+        source: sessionKey.address,
+      }),
+    )
+  }
+  if (instructions.length) await sendAsSessionKey(client, instructions)
 }

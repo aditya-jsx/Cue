@@ -19,6 +19,7 @@ import {
 } from '@solana/kit'
 
 import { clearSessionKey, getOrCreateSessionKey } from '@/features/cue/data-access/session-key'
+import { returnSessionFunds } from '@/features/wallet/util/execute-swap'
 import { getTransferSolInstruction } from '@/features/wallet/util/get-transfer-sol-instruction'
 import { sendAndConfirm } from '@/features/wallet/util/send-signed-transaction'
 import {
@@ -287,8 +288,14 @@ export async function executeDelegationRevoke({
     transaction: signedTx,
   })
 
-  // Clear session key from local storage upon successful revoke
-  await clearSessionKey()
+  // Whatever the session key still holds goes back first. Only once that has worked is the key deleted, because
+  // deleting it earlier would strand those funds for good; if returning fails the key is kept so it can be retried.
+  try {
+    await returnSessionFunds({ client, ownerAddress: account.address })
+    await clearSessionKey()
+  } catch (error) {
+    console.warn('[CueRevoke] Could not return the session key funds, keeping the key so it can be retried:', error)
+  }
 
   return signature
 }

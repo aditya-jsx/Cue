@@ -71,9 +71,3 @@ export async function clearSessionKey(): Promise<void> {
   await SecureStore.deleteItemAsync(SESSION_KEY_STORAGE_KEY)
   legacyStorage.remove(SESSION_KEY_STORAGE_KEY)
 }
-
-/** Removes the session key from this phone (used when the user deletes their Cue data). */
-export async function deleteSessionKey(): Promise<void> {
-  await SecureStore.deleteItemAsync(SESSION_KEY_STORAGE_KEY)
-  legacyStorage.clearAll()
-}
