@@ -316,7 +316,10 @@ function route(text: string, plan: Plan, draft: Draft | null) {
   }
   push(plan.kind === 'nope' || plan.kind === 'answer' ? 'nope' : 'confirm')
   // Said back so a misheard amount or name is caught by ear; with voice approvals the sheet says it and then listens.
-  if (!canApproveByVoice(plan)) speak(spokenConfirm(plan))
+  if (!canApproveByVoice(plan)) {
+    const why = voiceApprovalsOn() ? whyNotByVoice(plan) : null
+    speak(why ? spokenConfirm(plan).replace('Tap continue.', why) : spokenConfirm(plan))
+  }
 }
 
 export const flow = {
@@ -643,6 +646,14 @@ export function canApproveByVoice(plan: Plan): boolean {
     return toNamed && BigInt(Math.round(plan.amount * 1e9)) <= allowanceLeft()
   }
   return false
+}
+
+/** Voice approvals are on but this one needs a tap: say why, so it doesn't look like voice approval broke. */
+export function whyNotByVoice(plan: Plan): string | null {
+  if (plan.kind === 'send' && plan.recipientName.includes('…'))
+    return 'Voice approvals only pay saved contacts or Seeker names, so tap continue to sign.'
+  if (plan.kind === 'send') return "That's more than your voice allowance has left, so tap continue to sign."
+  return null
 }
 
 /**

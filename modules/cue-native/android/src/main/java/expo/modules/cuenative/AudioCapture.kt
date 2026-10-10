@@ -29,6 +29,8 @@ object AudioCapture {
   private const val MIN_SPEECH_RMS = 600.0
   private const val MAX_NOISE_FLOOR = 800.0 // a calibration that caught speech would otherwise make speech count as silence
   private const val MIN_QUIET_RMS = 300.0
+  private const val OVER_CHIME_FRAMES = 100 // 2 s, longer than the chime
+  private const val OVER_CHIME_GRACE_MS = 1_500 // speech starting this soon after the chime may have begun over it
   private const val MIN_VOICED_MS = 250 // shorter than any word: a sound this brief that's followed by quiet isn't speech // below this counts as silence; lower than the start level so soft words aren't cut off
 
   @Volatile private var running = false
@@ -75,6 +77,7 @@ object AudioCapture {
         var voicedMs = 0
         var recordedMs = 0
         var heardSomething = false
+        val overChime = ArrayDeque<ShortArray>()
         var elapsedMs = 0
 
         while (running) {
@@ -91,8 +94,13 @@ object AudioCapture {
           for (s in frame) sum += s.toDouble() * s
           val rms = sqrt(sum / FRAME_SAMPLES)
 
-          // Cue's own chime is still playing: neither the room nor the command.
-          if (System.currentTimeMillis() < CueWakeWordBus.chimeUntil) continue
+          // Cue's own chime is still playing: it mustn't set the room level or count as speech, but someone who talks
+          // straight after "Hey Cue" is talking over it, so the audio is kept to go in front of the clip.
+          if (System.currentTimeMillis() < CueWakeWordBus.chimeUntil) {
+            overChime.addLast(frame.copyOf())
+            if (overChime.size > OVER_CHIME_FRAMES) overChime.removeFirst()
+            continue
+          }
           recordedMs += FRAME_MS
 
           // The first 200 ms measure the room, so the speech threshold adapts to a quiet room or a noisy one. The
@@ -102,10 +110,14 @@ object AudioCapture {
             if (++calibrationFrames == 10) noiseFloor = minOf(noiseFloor, MAX_NOISE_FLOOR)
           }
           val threshold = maxOf(noiseFloor * 3.0, MIN_SPEECH_RMS)
-          val quietThreshold = maxOf(noiseFloor * 2.0, MIN_QUIET_RMS)
+          val quietThreshold = maxOf(noiseFloor * 1.5, MIN_QUIET_RMS) // quiet syllables mid-sentence aren't silence
           val copy = frame.copyOf()
 
           if (fixedMs > 0) {
+            if (overChime.isNotEmpty()) {
+              overChime.forEach { clip.write(toBytes(it)) }
+              overChime.clear()
+            }
             clip.write(toBytes(copy))
             if (rms > threshold) heardSomething = true
             if (recordedMs >= fixedMs) {
@@ -127,6 +139,9 @@ object AudioCapture {
             if (loudRun >= SPEECH_START_FRAMES) {
               speaking = true
               Log.d("CueAudioCapture", "speech start at ${elapsedMs}ms rms=${rms.toInt()} threshold=${threshold.toInt()}")
+              // Talking began right as the chime ended: the start of the sentence was said over it.
+              if (recordedMs <= OVER_CHIME_GRACE_MS) overChime.forEach { clip.write(toBytes(it)) }
+              overChime.clear()
               preRoll.forEach { clip.write(toBytes(it)) }
               preRoll.clear()
               silentMs = 0

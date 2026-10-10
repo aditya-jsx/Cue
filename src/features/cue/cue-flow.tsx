@@ -46,6 +46,7 @@ import {
   declinedBecause,
   executeWithAllowance,
   hearApproval,
+  whyNotByVoice,
   activateGuard,
   addContact,
   type ComposeKind,
@@ -69,6 +70,7 @@ import { $prices, type Symbol } from '@/features/prices/data-access/price-store'
 import CueNative from '../../../modules/cue-native'
 import { executeDelegationGrant } from '@/features/wallet/util/execute-delegation'
 import { executeInstantSend } from '@/features/wallet/util/execute-instant-send'
+import { voiceApprovalsOn } from '@/features/cue/data-access/voice-allowance'
 import { answerQuestion } from '@/features/cue/util/answer'
 import { speak, speakAndWait } from '@/features/cue/util/speech'
 import { spokenApproved, spokenConfirm } from '@/features/cue/util/spoken'
@@ -624,6 +626,11 @@ function Confirm() {
           </>
         ) : (
           <>
+            {voiceApprovalsOn() && whyNotByVoice(plan) ? (
+              <Txt style={{ textAlign: 'center' }} v="k">
+                {whyNotByVoice(plan)!.replace(', so tap continue to sign.', '.')}
+              </Txt>
+            ) : null}
             {plan.kind === 'buy' ? <CueButton label="Continue" onPress={flow.review} /> : null}
             {plan.kind === 'guard' ? <CueButton label="Continue" onPress={turnOnGuard} /> : null}
             {plan.kind === 'alert' ? <CueButton label="Continue" onPress={turnOnAlert} /> : null}
