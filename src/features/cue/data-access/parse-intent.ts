@@ -16,6 +16,8 @@ export type Intent =
       threshold_pct: number
       timeframe: '1h' | '24h'
     }
+  | { condition?: 'above' | 'below'; intent: 'price_alert'; threshold_usd: number; token: string }
+  | { intent: 'wallet_question'; question: 'balance' | 'price' | 'rules'; token?: string }
   | { intent: 'unsupported'; reason: string }
 
 // Tokens Cue has a live price feed for, so it can actually watch them.
@@ -94,6 +96,31 @@ export function parseIntent(text: string): Intent {
       threshold_usd,
       token,
     }
+  }
+
+  // Before the guard: "alert me when JUP drops to 30 cents" names a token, "...if my portfolio drops 10%" doesn't.
+  const alert = t.match(
+    /^(?:alert|notify|tell|warn|ping)\s+me\s+(?:when|if)\s+([a-z]+)\b.*?(?:(\d*\.?\d+)\s*cents?|\$(\d*\.?\d+))/i,
+  )
+  if (alert && WATCHABLE_TOKENS.includes(alert[1].toUpperCase())) {
+    const threshold_usd = alert[2] !== undefined ? Number(alert[2]) / 100 : Number(alert[3])
+    if (!(threshold_usd > 0)) return { intent: 'unsupported', reason: 'The price must be more than zero.' }
+    const condition = /\b(above|over|rises?|goes up|climbs?)\b/i.test(t)
+      ? 'above'
+      : /\b(below|under|drops?|falls?|goes down)\b/i.test(t)
+        ? 'below'
+        : undefined
+    return { condition, intent: 'price_alert', threshold_usd, token: alert[1].toUpperCase() }
+  }
+
+  const question = t.match(/^(?:what(?:'s| is| are)?|how much|how many)\b(.*)$/i)
+  if (question) {
+    const rest = question[1]
+    const token = WATCHABLE_TOKENS.find((s) => new RegExp(`\\b${s}\\b`, 'i').test(rest))
+    if (/\b(rules?|alerts?|guards?)\b/i.test(rest)) return { intent: 'wallet_question', question: 'rules' }
+    if (/\b(price|worth|cost|trading|at)\b/i.test(rest) && token)
+      return { intent: 'wallet_question', question: 'price', token }
+    if (/\b(balance|have|hold|got|own)\b/i.test(rest)) return { intent: 'wallet_question', question: 'balance', token }
   }
 
   const guard = t.match(

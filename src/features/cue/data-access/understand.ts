@@ -44,6 +44,12 @@ export function toDraft(raw: unknown): Draft | null {
   }
 }
 
+/** What the manual form can reopen pre-filled: only the three actions it has fields for. */
+export const draftOf = (intent: Intent): Draft | null =>
+  intent.intent === 'instant_send' || intent.intent === 'conditional_buy' || intent.intent === 'portfolio_guard'
+    ? intent
+    : null
+
 /** The proxy's reply is external input: rebuild a well-formed Intent from it, or reject it. */
 export function toIntent(raw: unknown): Intent | null {
   if (!raw || typeof raw !== 'object') return null
@@ -76,6 +82,17 @@ export function toIntent(raw: unknown): Intent | null {
           }
         : null
     }
+    case 'price_alert': {
+      const threshold_usd = num(o.threshold_usd)
+      const token = str(o.token)?.toUpperCase()
+      if (!threshold_usd || !token) return null
+      const condition = o.condition === 'above' || o.condition === 'below' ? o.condition : undefined
+      return { condition, intent: 'price_alert', threshold_usd, token }
+    }
+    case 'wallet_question':
+      return o.question === 'balance' || o.question === 'price' || o.question === 'rules'
+        ? { intent: 'wallet_question', question: o.question, token: str(o.token)?.toUpperCase() }
+        : null
     case 'unsupported':
       return { intent: 'unsupported', reason: str(o.reason) ?? "I can't do that yet." }
   }
@@ -105,7 +122,7 @@ export async function understand(
 ): Promise<{ draft: Draft | null; intent: Intent }> {
   const local = () => {
     const intent = parseIntent(normalizeTranscript(transcript))
-    return { draft: intent.intent === 'unsupported' ? null : intent, intent }
+    return { draft: draftOf(intent), intent }
   }
   if (!API_URL) return local()
 
@@ -128,7 +145,7 @@ export async function understand(
     const body = (await response.json()) as { draft?: unknown }
     const intent = toIntent(body)
     if (!intent) throw new Error('parse-intent returned an unusable intent')
-    return { draft: intent.intent === 'unsupported' ? toDraft(body.draft) : intent, intent }
+    return { draft: intent.intent === 'unsupported' ? toDraft(body.draft) : draftOf(intent), intent }
   } catch (error) {
     console.warn('[CueUnderstand] falling back to the local parser:', error)
     return local()
@@ -160,7 +177,7 @@ export async function understandAudio(
     const intent = toIntent(body)
     if (!intent) throw new Error('parse-intent returned an unusable intent')
     return {
-      draft: intent.intent === 'unsupported' ? toDraft(body.draft) : intent,
+      draft: intent.intent === 'unsupported' ? toDraft(body.draft) : draftOf(intent),
       intent,
       transcript: typeof body.transcript === 'string' ? body.transcript.trim() : '',
     }

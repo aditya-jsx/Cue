@@ -15,13 +15,15 @@ The command arrives either as a short audio clip of the user speaking, or as tex
 
 Always write what the user said into "transcript", as plain text with numbers as digits and the token as "SOL". If the audio is silent or has no speech, set transcript to an empty string and intent to "unsupported" with reason "I didn't catch that.".
 
-Cue can do exactly three things:
+Cue can do exactly five things:
 - instant_send: send SOL right now. Fill amount (in SOL), token ("SOL") and recipient.
 - conditional_buy: buy a token when its price crosses a threshold. Fill amount_usd, token, condition ("below" or "above") and threshold_usd in dollars ("85 cents" is 0.85). Tokens are written by symbol: JUP (Jupiter), SKR (the Seeker token, said "S K R" or "Seeker"), SOL. "S K R" right after "of" or "buy" is the token; after a name and "dot" it is a Seeker name.
 - portfolio_guard: watch for a drop in the user's portfolio. Fill threshold_pct, timeframe ("1h", or "24h" for "today"/"a day"/unspecified) and action ("pause_activity" when they say pause, stop or freeze; otherwise "alert_only").
+- price_alert: tell the user when a token's price crosses a level, nothing bought ("tell me when SOL goes above 120", "alert me if JUP drops to 30 cents"). Fill token, threshold_usd, and condition when they said which way ("above"/"rises"/"over" or "below"/"drops"/"under"), else null. "Alert me if my portfolio drops" is portfolio_guard; an alert about one token's price is price_alert.
+- wallet_question: a question about their own wallet, answered out loud. question is "balance" (how much SOL or of a token they hold; fill token if they named one), "price" (what a token costs now; fill token), or "rules" (what rules or alerts they have set).
 Anything else is "unsupported", with a short, friendly reason written to the user.
 
-Every command starts with a verb: "send", "buy", or "alert"/"notify"/"pause". A buy command begins "buy ..." even when the first sound is faint, and "buy five dollars" blends together easily, so it is very easy to mishear as "$55": amounts are small (Cue caps a rule at $50), so "buy five dollars" is $5, "buy ten dollars" is $10, and a heard amount above $50 is almost always two numbers run together. Keep the verb in "transcript".
+Commands usually start with a verb: "send", "buy", or "alert"/"notify"/"tell"/"pause"; questions start with "what"/"how much". A buy command begins "buy ..." even when the first sound is faint, and "buy five dollars" blends together easily, so it is very easy to mishear as "$55": amounts are small (Cue caps a rule at $50), so "buy five dollars" is $5, "buy ten dollars" is $10, and a heard amount above $50 is almost always two numbers run together. Keep the verb in "transcript".
 
 For the recipient: a Seeker name ends in ".skr" (spoken "alice dot S K R" or "alice dot skr"); return it as "alice.skr", lowercase, and never swap it for a contact, even one that sounds alike. Otherwise, if the spoken name plausibly matches one of the user's contacts, return that contact's exact name. Return a wallet address unchanged. Otherwise return the name as heard.
 Never invent an amount, token or price the user didn't say. If you can tell which action they want but a value is missing or unintelligible, still set intent to that action, fill in what you did understand, leave the rest null, and put a short question for the missing part in reason.
@@ -36,7 +38,11 @@ const SCHEMA = {
     amount: nullable({ type: 'number' }),
     amount_usd: nullable({ type: 'number' }),
     condition: nullable({ enum: ['above', 'below'], type: 'string' }),
-    intent: { enum: ['instant_send', 'conditional_buy', 'portfolio_guard', 'unsupported'], type: 'string' },
+    intent: {
+      enum: ['instant_send', 'conditional_buy', 'portfolio_guard', 'price_alert', 'wallet_question', 'unsupported'],
+      type: 'string',
+    },
+    question: nullable({ enum: ['balance', 'price', 'rules'], type: 'string' }),
     reason: nullable({ type: 'string' }),
     recipient: nullable({ type: 'string' }),
     threshold_pct: nullable({ type: 'number' }),
@@ -51,6 +57,7 @@ const SCHEMA = {
     'amount_usd',
     'condition',
     'intent',
+    'question',
     'reason',
     'recipient',
     'threshold_pct',
@@ -79,6 +86,8 @@ const REQUIRED: Record<string, string[]> = {
   conditional_buy: ['amount_usd', 'token', 'threshold_usd', 'condition'],
   instant_send: ['amount', 'recipient'],
   portfolio_guard: ['threshold_pct'],
+  price_alert: ['token', 'threshold_usd'],
+  wallet_question: ['question'],
 }
 
 /**
@@ -101,7 +110,10 @@ function toCueIntent(raw: Raw) {
   }
   if (raw.intent === 'instant_send')
     return { ...fields, token: String(fields.token ?? 'SOL').toUpperCase(), transcript }
-  if (raw.intent === 'conditional_buy') return { ...fields, token: String(fields.token).toUpperCase(), transcript }
+  if (raw.intent === 'conditional_buy' || raw.intent === 'price_alert')
+    return { ...fields, token: String(fields.token).toUpperCase(), transcript }
+  if (raw.intent === 'wallet_question')
+    return { ...fields, token: fields.token ? String(fields.token).toUpperCase() : undefined, transcript }
   return { action: 'alert_only', timeframe: '24h', ...fields, transcript }
 }
 

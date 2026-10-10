@@ -2,11 +2,14 @@ import { address } from '@solana/kit'
 
 import type { SolanaClient } from '@/features/cluster/data-access/create-solana-client'
 import { pushLogEntry } from '@/features/cue/data-access/cue-store'
+import { speak } from '@/features/cue/util/speech'
+import { spokenPrice, spokenToken } from '@/features/cue/util/spoken'
 import {
   $triggers,
   type BuyTrigger,
   describeTrigger,
   formatUsd,
+  type AlertTrigger,
   type GuardTrigger,
   markTriggerExpired,
   markTriggerFailed,
@@ -52,6 +55,7 @@ export async function evaluateTriggers(client: SolanaClient, maxPriceAgeMs: numb
   const prices = $prices.get()
   for (const trigger of $triggers.get().filter((t) => t.status === 'active')) {
     if (trigger.kind === 'buy') await evaluateBuy(client, trigger, prices, maxPriceAgeMs, clusterId)
+    else if (trigger.kind === 'alert') evaluateAlert(trigger, prices[trigger.symbol], maxPriceAgeMs)
     else evaluateGuard(trigger, prices.SOL, maxPriceAgeMs)
   }
 }
@@ -136,6 +140,20 @@ async function evaluateBuy(
 
 // ponytail: tumbling window (baseline resets each window), so a drop straddling two windows can be missed; keep a
 // price history and compare against the window's max if that ever matters.
+function evaluateAlert(trigger: AlertTrigger, point: PricePoint | undefined, maxPriceAgeMs: number) {
+  if (!point || !isFresh(trigger.symbol, point, maxPriceAgeMs)) return
+  if (!shouldFireTrigger(trigger.direction, point.usd, trigger.targetUsd)) return
+  markTriggerFired(trigger.id)
+  const moved = trigger.direction === 'above' ? 'rose above' : 'fell below'
+  const detail = `${trigger.symbol} ${moved} ${formatUsd(trigger.targetUsd)}: it's ${formatUsd(point.usd)} now`
+  pushLogEntry({ amount: formatUsd(point.usd), detail, status: 'Alert', title: `${trigger.symbol} price alert` })
+  CueNative.notify(`${trigger.symbol} price alert`, detail)
+  // Said out loud as well (when spoken replies are on): it's the moment the user asked to hear about.
+  speak(
+    `${spokenToken(trigger.symbol)} ${moved} ${spokenPrice(trigger.targetUsd)}. It's ${spokenPrice(point.usd)} now.`,
+  )
+}
+
 function evaluateGuard(trigger: GuardTrigger, sol: PricePoint | undefined, maxPriceAgeMs: number) {
   if (!sol || !isFresh('SOL', sol, maxPriceAgeMs)) return
   if (Date.now() - trigger.baselineAt > trigger.windowMs) {
@@ -153,4 +171,7 @@ function evaluateGuard(trigger: GuardTrigger, sol: PricePoint | undefined, maxPr
   }`
   pushLogEntry({ amount: `-${formatPct(dropPct)}`, detail, status: 'Alert', title: 'Guard triggered' })
   CueNative.notify('Portfolio Guard triggered', detail)
+  speak(
+    `Portfolio guard: SOL fell ${dropPct.toFixed(1)} percent.${trigger.action === 'pause_activity' ? ' Your buy rules are paused.' : ''}`,
+  )
 }

@@ -40,6 +40,7 @@ import {
   $cue,
   $flow,
   activateBuy,
+  activateAlert,
   activateGuard,
   addContact,
   type ComposeKind,
@@ -51,6 +52,7 @@ import {
   shortAddr,
 } from '@/features/cue/data-access/cue-store'
 import {
+  $triggers,
   activeBuyLamports,
   formatUsd,
   type GuardAction,
@@ -62,6 +64,8 @@ import { $prices, type Symbol } from '@/features/prices/data-access/price-store'
 import CueNative from '../../../modules/cue-native'
 import { executeDelegationGrant } from '@/features/wallet/util/execute-delegation'
 import { executeInstantSend } from '@/features/wallet/util/execute-instant-send'
+import { answerQuestion } from '@/features/cue/util/answer'
+import { speak } from '@/features/cue/util/speech'
 import { mainnetRpc, resolveSkr, skrLabel } from '@/features/cue/data-access/skr'
 import { formatError } from '@/features/wallet/util/format-error'
 import { IOS_EASING, useCue } from '@/features/cue/cue-theme'
@@ -419,6 +423,12 @@ function Confirm() {
     }
   }
 
+  function turnOnAlert() {
+    if (!account) return
+    activateAlert(account.address)
+    flow.signed()
+  }
+
   function turnOnGuard() {
     if (!account) return
     activateGuard(account.address)
@@ -486,6 +496,25 @@ function Confirm() {
           </Animated.View>
         </>
       ) : null}
+      {plan.kind === 'alert' ? (
+        <>
+          <Animated.View entering={stagger(0)}>
+            <Tag>Price alert</Tag>
+          </Animated.View>
+          <Animated.View entering={stagger(1)}>
+            <Txt style={{ marginTop: 14 }} v="h">
+              {`Tell me when ${plan.symbol} ${plan.direction === 'above' ? 'rises above' : 'falls below'} ${formatUsd(plan.targetUsd)}`}
+            </Txt>
+          </Animated.View>
+          <Animated.View entering={stagger(3)} style={{ marginTop: 22 }}>
+            <Rows>
+              <KV label={`${plan.symbol} now`} value={num(formatUsd(plan.priceUsd))} />
+              <KV label="Cue does" value={val('Sends you a notification, once')} />
+              <KV label="Signature" last value={val('Not needed')} />
+            </Rows>
+          </Animated.View>
+        </>
+      ) : null}
       {plan.kind === 'guard' ? (
         <>
           <Animated.View entering={stagger(0)}>
@@ -530,6 +559,7 @@ function Confirm() {
         {error ? <Txt v="k">{error}</Txt> : null}
         {plan.kind === 'buy' ? <CueButton label="Review permission" onPress={flow.review} /> : null}
         {plan.kind === 'guard' ? <CueButton label="Turn on guard" onPress={turnOnGuard} /> : null}
+        {plan.kind === 'alert' ? <CueButton label="Turn on alert" onPress={turnOnAlert} /> : null}
         {plan.kind === 'send' ? (
           <CueButton
             label="Confirm and sign"
@@ -539,9 +569,11 @@ function Confirm() {
           />
         ) : null}
         <View style={{ flexDirection: 'row', gap: 12 }}>
-          <View style={{ flex: 1 }}>
-            <CueButton label="Edit details" onPress={flow.edit} variant="glass" />
-          </View>
+          {plan.kind === 'alert' ? null : (
+            <View style={{ flex: 1 }}>
+              <CueButton label="Edit details" onPress={flow.edit} variant="glass" />
+            </View>
+          )}
           <View style={{ flex: 1 }}>
             <CueButton label="Cancel" onPress={flow.cancel} variant="glass" />
           </View>
@@ -551,8 +583,53 @@ function Confirm() {
   )
 }
 
+/** A question about the wallet, looked up and said out loud. */
+function Answer({ question, symbol }: { question: 'balance' | 'price' | 'rules'; symbol?: Symbol }) {
+  const { text } = useStore($flow)
+  const { account } = useMobileWallet()
+  const { client } = useAppCluster()
+  const [answer, setAnswer] = useState<string | null>(null)
+  useEffect(() => {
+    let live = true
+    const rules = $triggers.get().filter((t) => t.status === 'active')
+    answerQuestion({ client, owner: account!.address, prices: $prices.get(), question, rules, symbol })
+      .then((a) => {
+        if (!live) return
+        setAnswer(a.text)
+        speak(a.spoken)
+      })
+      .catch(() => {
+        if (!live) return
+        const sorry = "I couldn't check that right now. Try again in a moment."
+        setAnswer(sorry)
+        speak(sorry)
+      })
+    return () => {
+      live = false
+    }
+  }, [account, client, question, symbol])
+  return (
+    <Sheet>
+      {text ? (
+        <>
+          <Txt v="k">You asked</Txt>
+          <Txt style={{ marginTop: 6 }} v="h">
+            {text}
+          </Txt>
+        </>
+      ) : null}
+      <Txt style={{ fontSize: 22, fontWeight: '600', marginTop: 16 }}>{answer ?? 'Checking…'}</Txt>
+      <View style={{ gap: 12, paddingTop: 22 }}>
+        <CueButton label="Ask something else" onPress={flow.retry} />
+        <CueButton label="Close" onPress={flow.cancel} variant="glass" />
+      </View>
+    </Sheet>
+  )
+}
+
 function NotSupported() {
   const { draft, plan, text } = useStore($flow)
+  if (plan.kind === 'answer') return <Answer question={plan.question} symbol={plan.symbol} />
   return (
     <Sheet>
       {text ? (
@@ -951,7 +1028,12 @@ function Success() {
                 plan.action === 'pause_activity' ? 'Cue pauses your buy rules and tells you.' : 'you get an alert.'
               }`,
             ]
-          : ['', '']
+          : plan.kind === 'alert'
+            ? [
+                'Alert is on',
+                `Cue will tell you once when ${plan.symbol} ${plan.direction === 'above' ? 'rises above' : 'falls below'} ${formatUsd(plan.targetUsd)}. Nothing is bought.`,
+              ]
+            : ['', '']
   return (
     <Animated.View
       entering={ZoomIn.duration(420).easing(ease)}

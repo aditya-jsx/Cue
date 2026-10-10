@@ -13,6 +13,7 @@ import { mainnetRpc, resolveSkr, skrLabel } from '@/features/cue/data-access/skr
 import {
   assistantConfigured,
   type Draft,
+  draftOf,
   setDeviceIdSource,
   understand,
   understandAudio,
@@ -55,6 +56,8 @@ export type Plan =
       targetUsd: number
     }
   | { action: GuardAction; baselineUsd: number; kind: 'guard'; thresholdPct: number; timeframe: '1h' | '24h' }
+  | { direction: TriggerDirection; kind: 'alert'; priceUsd: number; symbol: Symbol; targetUsd: number }
+  | { kind: 'answer'; question: 'balance' | 'price' | 'rules'; symbol?: Symbol }
   | { kind: 'nope'; reason: string }
 
 // Tapping one plays it through the same listening → parse → validate path as speaking it.
@@ -193,6 +196,28 @@ export function prepareIntent(intent: Intent, skrRecipient?: { address: string; 
         targetUsd: intent.threshold_usd,
       }
     }
+    case 'price_alert': {
+      if (!WATCHABLE_TOKENS.includes(intent.token)) {
+        return nope(`I can only watch ${WATCHABLE_TOKENS.join(', ')} prices for now.`)
+      }
+      if (!(intent.threshold_usd > 0)) return nope('The price must be more than zero.')
+      const now = prices[intent.token as Symbol]
+      if (!now) return nope(LOADING_PRICES)
+      return {
+        // "Tell me when SOL hits 120" names no direction: it's whichever way the price has to move to get there.
+        direction: intent.condition ?? (intent.threshold_usd >= now.usd ? 'above' : 'below'),
+        kind: 'alert',
+        priceUsd: now.usd,
+        symbol: intent.token as Symbol,
+        targetUsd: intent.threshold_usd,
+      }
+    }
+    case 'wallet_question': {
+      const symbol = intent.token && WATCHABLE_TOKENS.includes(intent.token) ? (intent.token as Symbol) : undefined
+      if (intent.token && !symbol) return nope(`I only know about ${WATCHABLE_TOKENS.join(', ')} for now.`)
+      if (intent.question === 'price' && !symbol) return nope('Which token? I know SOL, JUP and SKR.')
+      return { kind: 'answer', question: intent.question, symbol }
+    }
     case 'portfolio_guard':
       if (!(intent.threshold_pct > 0 && intent.threshold_pct < 100))
         return nope('The drop has to be between 0% and 100%.')
@@ -262,7 +287,7 @@ async function prepare(intent: Intent): Promise<Plan> {
 
 function route(text: string, plan: Plan, draft: Draft | null) {
   $flow.set({ ...$flow.get(), draft, plan, signature: null, text })
-  push(plan.kind === 'nope' ? 'nope' : 'confirm')
+  push(plan.kind === 'nope' || plan.kind === 'answer' ? 'nope' : 'confirm')
   speak(spokenConfirm(plan)) // say it back, so a misheard amount or name is caught by ear
 }
 
@@ -403,7 +428,7 @@ export const flow = {
     const ticket = ++understanding
     const plan = await prepare(intent)
     if (ticket !== understanding || $flow.get().stack[0] !== 'compose') return // closed while the name was looked up
-    route(text, plan, intent.intent === 'unsupported' ? null : intent)
+    route(text, plan, draftOf(intent))
   },
 }
 
@@ -462,6 +487,25 @@ export function activateGuard(ownerAddress: string) {
     detail: `Watching from SOL ${formatUsd(plan.baselineUsd)}`,
     status: 'Confirmed',
     title: plan.action === 'pause_activity' ? 'Guard on: pause' : 'Guard on: alert',
+  })
+  askBackgroundAccessOnce()
+}
+
+export function activateAlert(ownerAddress: string) {
+  const { plan } = $flow.get()
+  if (plan.kind !== 'alert') return
+  createTrigger({
+    direction: plan.direction,
+    kind: 'alert',
+    ownerAddress,
+    symbol: plan.symbol,
+    targetUsd: plan.targetUsd,
+  })
+  pushLogEntry({
+    amount: '—',
+    detail: `${plan.symbol} is ${formatUsd(plan.priceUsd)} now`,
+    status: 'Confirmed',
+    title: `Alert set: ${plan.symbol} ${plan.direction} ${formatUsd(plan.targetUsd)}`,
   })
   askBackgroundAccessOnce()
 }

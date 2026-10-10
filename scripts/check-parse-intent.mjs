@@ -98,4 +98,27 @@ for (const said of ['buy 5 dollars of seeker if it drops to 1 cent', 'buy 5 doll
   assert.equal(intent.token, 'SKR', said)
 }
 
+// Price alerts name a token; the portfolio guard doesn't.
+const p = (said) => parseIntent(normalizeTranscript(said))
+assert.deepEqual(p('tell me when SOL goes above $120'), {
+  condition: 'above',
+  intent: 'price_alert',
+  threshold_usd: 120,
+  token: 'SOL',
+})
+assert.deepEqual(p('alert me if JUP drops to 30 cents'), {
+  condition: 'below',
+  intent: 'price_alert',
+  threshold_usd: 0.3,
+  token: 'JUP',
+})
+assert.equal(p('notify me when seeker hits 2 cents').condition, undefined) // direction worked out from the price
+assert.equal(p('alert me if my portfolio drops 10% today').intent, 'portfolio_guard')
+
+// Questions about the wallet.
+assert.deepEqual(p("what's my balance"), { intent: 'wallet_question', question: 'balance', token: undefined })
+assert.deepEqual(p('how much JUP do I have'), { intent: 'wallet_question', question: 'balance', token: 'JUP' })
+assert.deepEqual(p("what's the price of SOL"), { intent: 'wallet_question', question: 'price', token: 'SOL' })
+assert.deepEqual(p('what rules do I have'), { intent: 'wallet_question', question: 'rules' })
+
 console.log('parse-intent: all checks passed')

@@ -44,15 +44,24 @@ export interface GuardTrigger extends TriggerBase {
   windowMs: number
 }
 
-export type PriceTrigger = BuyTrigger | GuardTrigger
-export type NewTrigger = Omit<BuyTrigger, keyof TriggerBase> | Omit<GuardTrigger, keyof TriggerBase>
+/** Price Alert: tells the user once when `symbol` crosses `targetUsd`. Nothing is bought. */
+export interface AlertTrigger extends TriggerBase {
+  direction: TriggerDirection
+  kind: 'alert'
+  symbol: Symbol
+  targetUsd: number
+}
+
+export type PriceTrigger = AlertTrigger | BuyTrigger | GuardTrigger
+export type NewTrigger =
+  Omit<AlertTrigger, keyof TriggerBase> | Omit<BuyTrigger, keyof TriggerBase> | Omit<GuardTrigger, keyof TriggerBase>
 
 function load(): PriceTrigger[] {
   const raw = storage.getString(KEY)
   if (!raw) return []
   try {
     // Guards from before alert/pause semantics were stop-loss transfers with no thresholdPct; they can't be evaluated.
-    return (JSON.parse(raw) as PriceTrigger[]).filter((t) => t.kind === 'buy' || 'thresholdPct' in t)
+    return (JSON.parse(raw) as PriceTrigger[]).filter((t) => t.kind !== 'guard' || 'thresholdPct' in t)
   } catch {
     return []
   }
@@ -143,6 +152,12 @@ export function describeTrigger(t: PriceTrigger): { detail: string; title: strin
         ? `Expires ${new Date(t.expiresAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}`
         : 'No expiry',
       title: `Buy ${spend} of ${t.symbol} ${t.direction} ${formatUsd(t.targetUsd)}`,
+    }
+  }
+  if (t.kind === 'alert') {
+    return {
+      detail: 'Tells you once, buys nothing',
+      title: `Alert when ${t.symbol} ${t.direction === 'above' ? 'rises above' : 'falls below'} ${formatUsd(t.targetUsd)}`,
     }
   }
   const window = t.windowMs <= 3_600_000 ? '1 hour' : '24 hours'
