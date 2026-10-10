@@ -22,11 +22,12 @@ object AudioCapture {
   private const val FRAME_SAMPLES = 320 // 20 ms
   private const val FRAME_MS = 20
   private const val PRE_ROLL_FRAMES = 15 // 300 ms
-  private const val MAX_CLIP_MS = 9_000
+  private const val MAX_CLIP_MS = 12_000
   private const val NO_SPEECH_MS = 6_000
-  private const val END_SILENCE_MS = 1_400
+  private const val END_SILENCE_MS = 2_000 // room for a pause mid-sentence, or spelling a name ("S, K, R")
   private const val SPEECH_START_FRAMES = 3
   private const val MIN_SPEECH_RMS = 600.0
+  private const val MAX_NOISE_FLOOR = 800.0 // a calibration that caught speech would otherwise make speech count as silence
   private const val MIN_QUIET_RMS = 300.0 // below this counts as silence; lower than the start level so soft words aren't cut off
 
   @Volatile private var running = false
@@ -82,10 +83,14 @@ object AudioCapture {
           for (s in frame) sum += s.toDouble() * s
           val rms = sqrt(sum / FRAME_SAMPLES)
 
-          // The first 200 ms measure the room, so the speech threshold adapts to a quiet room or a noisy one.
+          // Cue's own chime is still playing: neither the room nor the command.
+          if (System.currentTimeMillis() < CueWakeWordBus.chimeUntil) continue
+
+          // The first 200 ms measure the room, so the speech threshold adapts to a quiet room or a noisy one. The
+          // quietest frame, not the average: the user may already be talking.
           if (calibrationFrames < 10) {
-            noiseFloor += rms / 10
-            calibrationFrames++
+            noiseFloor = if (calibrationFrames == 0) rms else minOf(noiseFloor, rms)
+            if (++calibrationFrames == 10) noiseFloor = minOf(noiseFloor, MAX_NOISE_FLOOR)
           }
           val threshold = maxOf(noiseFloor * 3.0, MIN_SPEECH_RMS)
           val quietThreshold = maxOf(noiseFloor * 2.0, MIN_QUIET_RMS)

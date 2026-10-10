@@ -11,7 +11,7 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) // set in the
 
 const SYSTEM = `You turn a spoken wallet command into Cue's intent JSON.
 
-The command arrives either as a short audio clip of the user speaking, or as text produced by speech recognition. Text from speech recognition is often garbled: recover what the user most plausibly meant. Numbers can arrive as words or homophones ("to"/"too" for 2, "for" for 4, "won" for 1), "SOL" can arrive as "sold", "soul" or "sole", and short names lose letters ("LX" for Alex). For audio, listen carefully: the token is spelled S-O-L (pronounced "sol"), and names are most likely one of the user's contacts.
+The command arrives either as a short audio clip of the user speaking, or as text produced by speech recognition. Text from speech recognition is often garbled: recover what the user most plausibly meant. Numbers can arrive as words or homophones ("to"/"too" for 2, "for" for 4, "won" for 1), "SOL" can arrive as "sold", "soul" or "sole", and short names lose letters ("LX" for Alex). For audio, listen carefully: the token is spelled S-O-L (pronounced "sol"), and names are most likely one of the user's contacts, except a Seeker name (one followed by "dot S K R"), which can be any name at all: write its letters exactly as heard, never a contact's name.
 
 Always write what the user said into "transcript", as plain text with numbers as digits and the token as "SOL". If the audio is silent or has no speech, set transcript to an empty string and intent to "unsupported" with reason "I didn't catch that.".
 

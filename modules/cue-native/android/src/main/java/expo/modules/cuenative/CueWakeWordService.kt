@@ -148,7 +148,6 @@ class CueWakeWordService : Service() {
    */
   private fun captureCommandInBackground(record: AudioRecord) {
     record.stop()
-    Thread.sleep(CHIME_MS) // otherwise the chime itself is what gets recorded
     val done = CountDownLatch(1)
     var clip: String? = null
     AudioCapture.start { event, payload ->
@@ -193,6 +192,7 @@ class CueWakeWordService : Service() {
   }
 
   private fun playChime() {
+    CueWakeWordBus.chimeUntil = System.currentTimeMillis() + CHIME_MS // so the command recording skips it
     try {
       MediaPlayer.create(this, R.raw.cue_chime)?.apply {
         setOnCompletionListener { it.release() }
@@ -264,6 +264,9 @@ object CueWakeWordBus {
 
   /** Detection is ignored until then: Cue's own voice ("Hi, I'm Cue") can sound like "Hey Cue". */
   @Volatile var quietUntil: Long = 0L
+
+  /** Until when the "Hey Cue" chime is playing; the command recording ignores that audio. */
+  @Volatile var chimeUntil: Long = 0L
 
   /**
    * When the last wake happened. With the app closed, nothing in JS is listening yet when the service detects "Hey Cue",
