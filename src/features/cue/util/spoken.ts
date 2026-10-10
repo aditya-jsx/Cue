@@ -16,7 +16,7 @@ export function spokenPrice(usd: number): string {
   return cents >= 1 ? plural(cents, 'cent', 'cents') : `${usd} dollars`
 }
 
-const token = (symbol: string) => (symbol === 'JUP' ? 'Jupiter' : symbol)
+const token = (symbol: string) => (symbol === 'JUP' ? 'Jupiter' : symbol === 'SKR' ? 'Seeker' : symbol)
 const moves = (direction: 'above' | 'below') => (direction === 'below' ? 'falls to' : 'rises to')
 const frame = (timeframe: '1h' | '24h') => (timeframe === '1h' ? 'an hour' : '24 hours')
 const reaction = (action: 'alert_only' | 'pause_activity') =>

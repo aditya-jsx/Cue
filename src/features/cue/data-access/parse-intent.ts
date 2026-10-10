@@ -19,7 +19,7 @@ export type Intent =
   | { intent: 'unsupported'; reason: string }
 
 // Tokens Cue has a live price feed for, so it can actually watch them.
-export const WATCHABLE_TOKENS = ['SOL', 'JUP']
+export const WATCHABLE_TOKENS = ['SOL', 'JUP', 'SKR']
 
 const NOPE = "I can't do that yet."
 
@@ -47,13 +47,14 @@ const AMOUNT_HOMOPHONES: Record<string, string> = { ...NUMBER_WORDS, ate: '8', f
 export function normalizeTranscript(text: string): string {
   return text
     .replace(/\b(sold|sole|soul|saul)\b/gi, 'SOL')
+    .replace(/\bseeker(?: tokens?)?\b|\bs k r\b/gi, 'SKR') // Seeker's token, said as a word or spelled out
     .replace(/,(?!\d)/g, ' ') // "Send 2 SOL, to Alex"; keeps "1,000"
     .replace(/[.!?]+\s*$/, '') // dictation auto-punctuates short utterances: "...to Alex."
     .replace(/^(send|transfer)\s+([a-z]+)\b/i, (m, verb: string, w: string) => {
       const digit = AMOUNT_HOMOPHONES[w.toLowerCase()]
       return digit ? `${verb} ${digit}` : m
     })
-    .replace(/\b([a-z]+)(\s+(?:dollars?|bucks|cents|percent|SOL)\b)/gi, (m, w: string, unit: string) => {
+    .replace(/\b([a-z]+)(\s+(?:dollars?|bucks|cents?|percent|SOL)\b)/gi, (m, w: string, unit: string) => {
       const digit = NUMBER_WORDS[w.toLowerCase()]
       return digit ? `${digit}${unit}` : m
     })
@@ -75,7 +76,7 @@ export function parseIntent(text: string): Intent {
     return { amount, intent: 'instant_send', recipient: send[3].trim(), token }
   }
 
-  const buy = t.match(/^buy\s+\$?(\d*\.?\d+)\s+(?:of|worth of)\s+([a-z]+)\b.*?(?:(\d*\.?\d+)\s*cents|\$(\d*\.?\d+))/i)
+  const buy = t.match(/^buy\s+\$?(\d*\.?\d+)\s+(?:of|worth of)\s+([a-z]+)\b.*?(?:(\d*\.?\d+)\s*cents?|\$(\d*\.?\d+))/i)
   if (buy) {
     const token = buy[2].toUpperCase()
     const amount_usd = Number(buy[1])

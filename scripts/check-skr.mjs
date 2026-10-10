@@ -21,7 +21,11 @@ assert.equal(skrLabel('a.b.skr'), null) // subdomains are a different derivation
 assert.equal(skrLabel('.skr'), null)
 
 // The offline parser (used when the assistant is unreachable) keeps the spoken name for skrLabel to read.
-for (const said of ['send 0.01 SOL to alice dot skr', 'send 0.01 sol to alice.skr']) {
+for (const said of [
+  'send 0.01 SOL to alice dot skr',
+  'send 0.01 sol to alice.skr',
+  'send 0.01 SOL to alice dot s k r',
+]) {
   const intent = parseIntent(normalizeTranscript(said))
   assert.equal(intent.intent, 'instant_send', said)
   assert.equal(skrLabel(intent.recipient), 'alice', said)

@@ -17,7 +17,7 @@ Always write what the user said into "transcript", as plain text with numbers as
 
 Cue can do exactly three things:
 - instant_send: send SOL right now. Fill amount (in SOL), token ("SOL") and recipient.
-- conditional_buy: buy a token when its price crosses a threshold. Fill amount_usd, token, condition ("below" or "above") and threshold_usd in dollars ("85 cents" is 0.85).
+- conditional_buy: buy a token when its price crosses a threshold. Fill amount_usd, token, condition ("below" or "above") and threshold_usd in dollars ("85 cents" is 0.85). Tokens are written by symbol: JUP (Jupiter), SKR (the Seeker token, said "S K R" or "Seeker"), SOL. "S K R" right after "of" or "buy" is the token; after a name and "dot" it is a Seeker name.
 - portfolio_guard: watch for a drop in the user's portfolio. Fill threshold_pct, timeframe ("1h", or "24h" for "today"/"a day"/unspecified) and action ("pause_activity" when they say pause, stop or freeze; otherwise "alert_only").
 Anything else is "unsupported", with a short, friendly reason written to the user.
 

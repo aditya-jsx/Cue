@@ -71,4 +71,28 @@ const valid = await crypto.subtle.verify('Ed25519', throwaway.keyPair.publicKey,
 assert.equal(valid, true, 'the signature verifies against the transaction message')
 const wire = getBase64EncodedWireTransaction(signed)
 console.log(`Signed and encoded OK: ${Buffer.from(wire, 'base64').length} bytes, signature verifies. Nothing was sent.`)
+
+// SKR: no Pyth account, so the app prices it with Jupiter's price API; the same safety check runs against that.
+const SKR_MINT = 'SKRbvo6Gf7GondiT3BbTfuRDPqLWei4j2Qy2NPGZhW3'
+const skrUsd = (await (await fetch(`https://lite-api.jup.ag/price/v3?ids=${SKR_MINT}`)).json())[SKR_MINT].usdPrice
+const skrQuote = await fetchQuote({
+  amount: amountLamports,
+  inputMint: SOL_MINT,
+  outputMint: SKR_MINT,
+  slippageBps: 50,
+})
+console.log(
+  `SKR: Jupiter price $${skrUsd.toFixed(5)}; quote 0.01 SOL -> ${Number(skrQuote.outAmount) / 1e6} SKR, impact ${skrQuote.priceImpactPct}`,
+)
+const skrRefusal = checkSwapQuote({
+  amountLamports,
+  quote: skrQuote,
+  solUsd: sol.usd,
+  tokenDecimals: 6,
+  tokenUsd: skrUsd,
+})
+console.log('SKR safety check:', skrRefusal ?? 'passes')
+assert.equal(skrRefusal, null, 'a normal live SKR quote should pass the safety check')
+const skrSwap = await fetchSwap({ quote: skrQuote, userPublicKey: throwaway.address })
+assert.ok(skrSwap.swapTransaction, 'Jupiter built the SKR swap')
 console.log('dry-run-swap: all checks passed')

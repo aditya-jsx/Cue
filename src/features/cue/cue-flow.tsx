@@ -625,7 +625,7 @@ function Compose() {
   const [to, setTo] = useState(
     d.intent === 'instant_send' && plan.kind === 'send' ? plan.recipientName : (d.recipient ?? contacts[0]?.name ?? ''),
   )
-  const [symbol, setSymbol] = useState<Symbol>(d.token === 'SOL' ? 'SOL' : 'JUP')
+  const [symbol, setSymbol] = useState<Symbol>(d.token === 'SOL' || d.token === 'SKR' ? d.token : 'JUP')
   const [direction, setDirection] = useState<TriggerDirection>(d.condition ?? 'below')
   const [price, setPrice] = useState(String(d.threshold_usd ?? ''))
   const [pct, setPct] = useState(String(d.threshold_pct ?? 10))
@@ -705,7 +705,7 @@ function Compose() {
         {kind === 'buy' ? (
           <>
             <View style={{ flexDirection: 'row', gap: 8, marginTop: 16 }}>
-              {(['JUP', 'SOL'] as const).map((s) => (
+              {(['JUP', 'SKR', 'SOL'] as const).map((s) => (
                 <Pill key={s} label={s} on={symbol === s} onPress={() => setSymbol(s)} />
               ))}
             </View>

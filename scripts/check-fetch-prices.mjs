@@ -45,13 +45,20 @@ const client = {
     }),
   },
 }
+// Jupiter's price API, stubbed: SKR comes from there (no Pyth account), keyed by mint.
+const SKR_MINT = 'SKRbvo6Gf7GondiT3BbTfuRDPqLWei4j2Qy2NPGZhW3'
+let jupiterUp = true
+globalThis.fetch = async () =>
+  jupiterUp ? { json: async () => ({ [SKR_MINT]: { usdPrice: 0.0165 } }), ok: true } : { ok: false, status: 503 }
 await fetchPrices(client)
 const prices = $prices.get()
+assert.ok(Math.abs(prices.SKR.usd - 0.0165) < 1e-12)
 assert.ok(Math.abs(prices.SOL.usd - 150.42) < 1e-9)
 assert.ok(Math.abs(prices.JUP.usd - 0.85) < 1e-9)
 
-// Missing account (null value) doesn't throw, just skips that symbol.
+// Missing account (null value) doesn't throw, just skips that symbol; Jupiter down doesn't stop the Pyth prices.
 $prices.set({})
+jupiterUp = false
 await fetchPrices({ rpc: { getAccountInfo: () => ({ send: async () => ({ value: null }) }) } })
 assert.deepEqual($prices.get(), {})
 

@@ -91,4 +91,11 @@ assert.equal(toIntent({ ...nulls, intent: 'conditional_buy', token: 'JUP' }), nu
 assert.equal(toIntent({ intent: 'drain_wallet' }), null)
 assert.equal(toIntent('send 2 SOL'), null)
 
+// Seeker's token, said as a word or spelled out.
+for (const said of ['buy 5 dollars of seeker if it drops to 1 cent', 'buy 5 dollars of S K R if it drops to 1 cent']) {
+  const intent = parseIntent(normalizeTranscript(said))
+  assert.equal(intent.intent, 'conditional_buy', said)
+  assert.equal(intent.token, 'SKR', said)
+}
+
 console.log('parse-intent: all checks passed')

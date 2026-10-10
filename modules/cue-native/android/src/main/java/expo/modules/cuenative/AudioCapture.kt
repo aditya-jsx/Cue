@@ -24,7 +24,7 @@ object AudioCapture {
   private const val PRE_ROLL_FRAMES = 15 // 300 ms
   private const val MAX_CLIP_MS = 12_000
   private const val NO_SPEECH_MS = 6_000
-  private const val END_SILENCE_MS = 2_000 // room for a pause mid-sentence, or spelling a name ("S, K, R")
+  private const val END_SILENCE_MS = 1_500 // a natural pause mid-sentence; 2 s felt slow to end
   private const val SPEECH_START_FRAMES = 3
   private const val MIN_SPEECH_RMS = 600.0
   private const val MAX_NOISE_FLOOR = 800.0 // a calibration that caught speech would otherwise make speech count as silence
