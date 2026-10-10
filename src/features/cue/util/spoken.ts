@@ -26,21 +26,42 @@ const reaction = (action: 'alert_only' | 'pause_activity') =>
 // A recipient with no saved name is shown as a shortened address ("BWGt…6bzv"), which is no use read aloud.
 const who = (name: string) => (name.includes('…') ? `the address ending ${name.slice(-4).split('').join(' ')}` : name)
 
-/** After Cue understands a voice command: say it back, so a misheard amount or name is caught by ear. */
-export function spokenConfirm(plan: SpokenPlan): string {
+/**
+ * After Cue understands a voice command: say it back, so a misheard amount or name is caught by ear, then say what
+ * happens next: "approve" out loud (voice approvals on), or tap Continue.
+ */
+export function spokenConfirm(plan: SpokenPlan, byVoice = false): string {
+  const next = byVoice ? 'Say approve or decline.' : 'Tap continue.'
   switch (plan.kind) {
     case 'send':
-      return `Send ${plan.amount} SOL to ${who(plan.recipientName)}. Tap confirm and sign.`
+      return `Send ${plan.amount} SOL to ${who(plan.recipientName)}. ${next}`
     case 'buy':
-      return `Buy ${plural(plan.amountUsd, 'dollar', 'dollars')} of ${spokenToken(plan.symbol)} when it ${moves(plan.direction)} ${spokenPrice(plan.targetUsd)}. Tap review permission to continue.`
+      return `Buy ${plural(plan.amountUsd, 'dollar', 'dollars')} of ${spokenToken(plan.symbol)} when it ${moves(plan.direction)} ${spokenPrice(plan.targetUsd)}. ${next}`
     case 'guard':
-      return `Watch for a ${plan.thresholdPct} percent drop in ${frame(plan.timeframe)}, and ${reaction(plan.action)}. Tap turn on guard.`
+      return `Watch for a ${plan.thresholdPct} percent drop in ${frame(plan.timeframe)}, and ${reaction(plan.action)}. ${next}`
     case 'alert':
-      return `Tell you when ${spokenToken(plan.symbol)} ${plan.direction === 'above' ? 'rises above' : 'falls below'} ${spokenPrice(plan.targetUsd)}. Tap turn on alert.`
+      return `Tell you when ${spokenToken(plan.symbol)} ${plan.direction === 'above' ? 'rises above' : 'falls below'} ${spokenPrice(plan.targetUsd)}. ${next}`
     case 'answer':
       return '' // the answer screen says it once it has looked it up
     case 'nope':
       return plan.reason
+  }
+}
+
+/** Right after the user says "approve": what Cue heard, and what it is doing now. */
+export function spokenApproved(plan: SpokenPlan): string {
+  switch (plan.kind) {
+    case 'send':
+      return `You said approve. Sending ${plan.amount} SOL to ${who(plan.recipientName)}.`
+    case 'buy':
+      return `You said approve. Setting up the rule to buy ${plural(plan.amountUsd, 'dollar', 'dollars')} of ${spokenToken(plan.symbol)} when it ${moves(plan.direction)} ${spokenPrice(plan.targetUsd)}.`
+    case 'guard':
+      return `You said approve. Turning on the guard.`
+    case 'alert':
+      return `You said approve. Setting the alert for ${spokenToken(plan.symbol)}.`
+    case 'answer':
+    case 'nope':
+      return ''
   }
 }
 

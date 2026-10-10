@@ -2,12 +2,12 @@ import Ionicons from '@expo/vector-icons/Ionicons'
 import { useStore } from '@nanostores/react'
 import { useQuery } from '@tanstack/react-query'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
-import { Alert, ScrollView, View } from 'react-native'
+import { Alert, RefreshControl, ScrollView, View } from 'react-native'
 import Animated, { FadeInDown, LinearTransition } from 'react-native-reanimated'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { useAppCluster } from '@/features/cluster/data-access/cluster-provider'
-import { flow, SUGGESTIONS } from '@/features/cue/data-access/cue-store'
+import { $homeNotice, flow, SUGGESTIONS } from '@/features/cue/data-access/cue-store'
 import { mainnetRpc, skrNamesOf } from '@/features/cue/data-access/skr'
 import { $triggers, cancelTrigger, describeTrigger } from '@/features/price-triggers/data-access/trigger-store'
 import { useCue } from '@/features/cue/cue-theme'
@@ -41,11 +41,12 @@ export function CueHome() {
   const { account } = useMobileWallet()
   const { cluster } = useAppCluster()
   const rules = useStore($triggers).filter((t) => t.status === 'active')
+  const notice = useStore($homeNotice)
   const balance = useGetBalance(account!.address)
   const value = balance.data?.value
   const address = account!.address.toString()
   // The user's Seeker name, shown beside (never instead of) the address: anyone can send a name to any wallet.
-  const { data: skrName } = useQuery({
+  const { data: skrName, refetch: refetchSkrName } = useQuery({
     queryFn: () => skrNamesOf(mainnetRpc, account!.address).then((names) => names[0] ?? null),
     queryKey: ['skr-name', address],
     retry: false,
@@ -57,6 +58,16 @@ export function CueHome() {
     <CuePage>
       <ScrollView
         contentContainerStyle={{ paddingBottom: tabBarTop + 200, paddingHorizontal: 20 }}
+        refreshControl={
+          // Pull down to re-read the balance (and the .skr name) straight from the chain.
+          <RefreshControl
+            colors={[c.text]}
+            onRefresh={() => void Promise.all([balance.refetch(), refetchSkrName()])}
+            progressBackgroundColor={c.bg}
+            refreshing={balance.isRefetching}
+            tintColor={c.text}
+          />
+        }
         showsVerticalScrollIndicator={false}
       >
         <Animated.View
@@ -75,6 +86,34 @@ export function CueHome() {
             <Txt v="mono">{`${skrName ? `${skrName} · ` : ''}${address.slice(0, 4)}…${address.slice(-4)}`}</Txt>
           </Glass>
         </Animated.View>
+
+        {notice ? (
+          <Animated.View entering={FadeInDown.duration(350)} layout={LinearTransition} style={{ marginBottom: 14 }}>
+            <Glass radius={22} style={{ gap: 6, paddingHorizontal: 18, paddingVertical: 14 }}>
+              <View style={{ alignItems: 'flex-start', flexDirection: 'row', gap: 10 }}>
+                <Ionicons color={c.muted} name="chatbubble-ellipses-outline" size={18} style={{ marginTop: 2 }} />
+                <View style={{ flex: 1, gap: 4 }}>
+                  {notice.text ? <Txt v="k">{`You said “${notice.text}”`}</Txt> : null}
+                  <Txt style={{ fontSize: 15 }}>{notice.reason}</Txt>
+                  {notice.canEdit ? (
+                    <Press
+                      label="Fill in the rest"
+                      onPress={() => {
+                        $homeNotice.set(null)
+                        flow.edit()
+                      }}
+                    >
+                      <Txt style={{ color: c.accent, fontWeight: '600', marginTop: 4 }}>Fill in the rest</Txt>
+                    </Press>
+                  ) : null}
+                </View>
+                <Press label="Dismiss" onPress={() => $homeNotice.set(null)}>
+                  <Ionicons color={c.muted} name="close" size={18} />
+                </Press>
+              </View>
+            </Glass>
+          </Animated.View>
+        ) : null}
 
         <Animated.View entering={enter(1)}>
           <Glass radius={30} style={{ paddingBottom: 20, paddingHorizontal: 22, paddingTop: 22 }}>

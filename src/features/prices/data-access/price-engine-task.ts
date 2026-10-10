@@ -1,10 +1,9 @@
 import { createMMKV } from 'react-native-mmkv'
 import { AppRegistry } from 'react-native'
 
-import { APP_CLUSTER_STORAGE_KEY, APP_STORAGE_ID } from '@/features/cluster/data-access/create-cluster-props'
+import { activeCluster } from '@/features/cluster/data-access/active-client'
+import { APP_STORAGE_ID } from '@/features/cluster/data-access/create-cluster-props'
 import { createSolanaClient } from '@/features/cluster/data-access/create-solana-client'
-import { resolveActiveSolanaCluster } from '@/features/cluster/data-access/cluster-store'
-import { createMmkvCache } from '@/features/cluster/data-access/mmkv-cache'
 import { evaluateTriggers } from '@/features/price-triggers/util/evaluate-triggers'
 import { fetchPrices } from '@/features/prices/util/fetch-prices'
 import { maxPriceAgeMs } from '@/features/prices/util/price-freshness'
@@ -15,14 +14,6 @@ const POLL_INTERVAL_MS = 30_000
 export const POLL_STATS_KEY = 'cue:poll-stats'
 const statsStorage = createMMKV({ id: APP_STORAGE_ID })
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
-
-// Headless tasks run outside the React tree (no useAppCluster()), so read the persisted active cluster straight
-// from the same MMKV-backed cache the ClusterProvider uses, and re-resolve it each poll in case the user switches
-// clusters in Settings while the engine is running.
-const clusterCache = createMmkvCache<unknown>({
-  storage: createMMKV({ id: APP_STORAGE_ID }),
-  storageKey: APP_CLUSTER_STORAGE_KEY,
-})
 
 // The foreground service can call startForegroundService again (e.g. app relaunch) while a previous headless task
 // is still alive; without this guard each call stacks another concurrent polling loop (seen in the earlier spike).
@@ -39,7 +30,7 @@ AppRegistry.registerHeadlessTask('CueHeartbeat', () => async () => {
 
   for (let i = 0; ; i++) {
     try {
-      const cluster = resolveActiveSolanaCluster(clusterCache)
+      const cluster = activeCluster()
       const client = createSolanaClient(cluster)
       await fetchPrices(client)
       await evaluateTriggers(client, maxPriceAgeMs(cluster.id), cluster.id)

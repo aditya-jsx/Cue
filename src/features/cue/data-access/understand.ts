@@ -188,3 +188,31 @@ export async function understandAudio(
     clearTimeout(timer)
   }
 }
+
+/** The user's spoken answer to "approve or decline?", as the assistant heard it. Null when it can't be reached. */
+export async function understandReply(
+  wavBase64: string,
+): Promise<{ answer: 'approve' | 'decline' | 'unclear'; transcript: string } | null> {
+  if (!API_URL) return null
+  const abort = new AbortController()
+  const timer = setTimeout(() => abort.abort(), AUDIO_TIMEOUT_MS)
+  try {
+    const response = await fetch(`${API_URL}/api/parse-intent`, {
+      body: JSON.stringify({ audio: wavBase64, mimeType: 'audio/wav', mode: 'reply' }),
+      headers: requestHeaders(),
+      method: 'POST',
+      signal: abort.signal,
+    })
+    if (!response.ok) throw new Error(`parse-intent ${response.status}`)
+    const body = (await response.json()) as { answer?: unknown; transcript?: unknown }
+    return {
+      answer: body.answer === 'approve' || body.answer === 'decline' ? body.answer : 'unclear',
+      transcript: typeof body.transcript === 'string' ? body.transcript.trim() : '',
+    }
+  } catch (error) {
+    console.warn('[CueUnderstand] reply request failed:', error)
+    return null
+  } finally {
+    clearTimeout(timer)
+  }
+}

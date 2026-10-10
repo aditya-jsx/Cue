@@ -1,6 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons'
 import { useStore } from '@nanostores/react'
-import { type ReactNode, useEffect, useState } from 'react'
+import { type ReactNode, useEffect, useRef, useState } from 'react'
 import {
   Pressable,
   ScrollView,
@@ -40,7 +40,12 @@ import {
   $cue,
   $flow,
   activateBuy,
+  $homeNotice,
   activateAlert,
+  canApproveByVoice,
+  declinedBecause,
+  executeWithAllowance,
+  hearApproval,
   activateGuard,
   addContact,
   type ComposeKind,
@@ -65,7 +70,8 @@ import CueNative from '../../../modules/cue-native'
 import { executeDelegationGrant } from '@/features/wallet/util/execute-delegation'
 import { executeInstantSend } from '@/features/wallet/util/execute-instant-send'
 import { answerQuestion } from '@/features/cue/util/answer'
-import { speak } from '@/features/cue/util/speech'
+import { speak, speakAndWait } from '@/features/cue/util/speech'
+import { spokenApproved, spokenConfirm } from '@/features/cue/util/spoken'
 import { mainnetRpc, resolveSkr, skrLabel } from '@/features/cue/data-access/skr'
 import { formatError } from '@/features/wallet/util/format-error'
 import { IOS_EASING, useCue } from '@/features/cue/cue-theme'
@@ -391,6 +397,58 @@ function Confirm() {
   const { client, cluster } = useAppCluster()
   const refreshWallet = useRefreshWallet()
   const [error, setError] = useState<string | null>(null)
+  // Voice approvals on and this fits the allowance: Cue says it back, listens for "approve", and needs no wallet.
+  const [byVoice] = useState(() => canApproveByVoice(plan))
+  const [working, setWorking] = useState(false)
+  const decided = useRef(false) // a tap or the spoken answer, whichever comes first, settles it
+
+  async function approve(spoken = false) {
+    if (!account || decided.current) return
+    decided.current = true
+    setWorking(true)
+    setError(null)
+    // Said while it works, then the result, so the acknowledgement isn't cut off by "Sent…".
+    const acknowledged = spoken ? speakAndWait(spokenApproved(plan)) : Promise.resolve()
+    try {
+      const signature = await executeWithAllowance(plan, account.address, client)
+      refreshWallet()
+      await acknowledged
+      flow.signed(signature ?? undefined)
+    } catch (e) {
+      setError(formatError(e))
+      decided.current = false
+    } finally {
+      setWorking(false)
+    }
+  }
+
+  function decline(heard?: string) {
+    decided.current = true
+    const said =
+      heard === undefined || heard.toLowerCase().includes('decline') ? 'Okay, cancelled.' : declinedBecause(heard)
+    speak(said)
+    flow.cancel()
+    $homeNotice.set({
+      canEdit: false,
+      reason: said === 'Okay, cancelled.' ? 'Cancelled. Nothing was sent.' : said,
+      text: '',
+    })
+  }
+
+  useEffect(() => {
+    if (!byVoice || !account) return
+    const stillWanted = () => !decided.current && $flow.get().stack.at(-1) === 'confirm'
+    void (async () => {
+      await speakAndWait(spokenConfirm(plan, true))
+      if (!stillWanted()) return
+      const { approved, heard } = await hearApproval()
+      if (!stillWanted()) return
+      if (approved) await approve(true)
+      else decline(heard)
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const sendSol = useMutation({
     mutationFn: (p: { amount: number; recipient: string }) =>
       executeInstantSend({
@@ -557,17 +615,28 @@ function Confirm() {
       <View style={{ flex: 1 }} />
       <Animated.View entering={stagger(5)} style={{ gap: 12, paddingTop: 18 }}>
         {error ? <Txt v="k">{error}</Txt> : null}
-        {plan.kind === 'buy' ? <CueButton label="Review permission" onPress={flow.review} /> : null}
-        {plan.kind === 'guard' ? <CueButton label="Turn on guard" onPress={turnOnGuard} /> : null}
-        {plan.kind === 'alert' ? <CueButton label="Turn on alert" onPress={turnOnAlert} /> : null}
-        {plan.kind === 'send' ? (
-          <CueButton
-            label="Confirm and sign"
-            loading={sendSol.isPending}
-            loadingLabel="Waiting for your wallet"
-            onPress={sign}
-          />
-        ) : null}
+        {byVoice ? (
+          <>
+            <Txt style={{ textAlign: 'center' }} v="k">
+              {working ? 'Approved. Working on it…' : 'Say “approve” or “decline”, or tap'}
+            </Txt>
+            <CueButton label="Approve" loading={working} loadingLabel="Approved" onPress={() => void approve()} />
+          </>
+        ) : (
+          <>
+            {plan.kind === 'buy' ? <CueButton label="Continue" onPress={flow.review} /> : null}
+            {plan.kind === 'guard' ? <CueButton label="Continue" onPress={turnOnGuard} /> : null}
+            {plan.kind === 'alert' ? <CueButton label="Continue" onPress={turnOnAlert} /> : null}
+            {plan.kind === 'send' ? (
+              <CueButton
+                label="Continue"
+                loading={sendSol.isPending}
+                loadingLabel="Waiting for your wallet"
+                onPress={sign}
+              />
+            ) : null}
+          </>
+        )}
         <View style={{ flexDirection: 'row', gap: 12 }}>
           {plan.kind === 'alert' ? null : (
             <View style={{ flex: 1 }}>
@@ -575,7 +644,11 @@ function Confirm() {
             </View>
           )}
           <View style={{ flex: 1 }}>
-            <CueButton label="Cancel" onPress={flow.cancel} variant="glass" />
+            <CueButton
+              label={byVoice ? 'Decline' : 'Cancel'}
+              onPress={byVoice ? () => decline() : flow.cancel}
+              variant="glass"
+            />
           </View>
         </View>
       </Animated.View>

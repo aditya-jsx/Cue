@@ -2,7 +2,7 @@ import Ionicons from '@expo/vector-icons/Ionicons'
 import { useStore } from '@nanostores/react'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { Link } from 'expo-router'
-import { Alert, AppState, Pressable, ScrollView, View } from 'react-native'
+import { Alert, AppState, Pressable, ScrollView, TextInput, View } from 'react-native'
 import Animated, {
   FadeInDown,
   FadeOutLeft,
@@ -21,6 +21,7 @@ import { $cue, actions, flow, pushLogEntry, removeContact, shortAddr } from '@/f
 import {
   $delegatedLamports,
   $triggers,
+  activeBuyLamports,
   setDelegatedLamports,
   stopBuyTriggers,
 } from '@/features/price-triggers/data-access/trigger-store'
@@ -33,15 +34,137 @@ import { askBackgroundAccess, isBackgroundAllowed } from '@/features/cue/util/ba
 import { resetOnboarding } from '@/features/cue/data-access/onboarding'
 import { deleteAllCueData } from '@/features/cue/util/delete-data'
 import { $spoken, $voice, type CueVoice, setSpoken, setVoice } from '@/features/cue/util/speech'
-import { CuePage, Press, Row, Rows, SectionLabel, Segment, Txt } from '@/features/cue/ui/cue-ui'
+import { CueButton, CuePage, Press, Row, Rows, SectionLabel, Segment, Txt } from '@/features/cue/ui/cue-ui'
 import { setTheme, type Theme, useTheme } from '@/features/shell/data-access/use-theme'
-import { executeDelegationRevoke } from '@/features/wallet/util/execute-delegation'
+import { executeDelegationGrant, executeDelegationRevoke } from '@/features/wallet/util/execute-delegation'
+import { useGetBalance } from '@/features/wallet/data-access/use-get-balance'
+import {
+  $voiceAllowance,
+  allowanceLeft,
+  DEFAULT_ALLOWANCE_SOL,
+  setVoiceAllowance,
+} from '@/features/cue/data-access/voice-allowance'
 import { formatError } from '@/features/wallet/util/format-error'
 import CueNative from '../../../modules/cue-native'
 
 const THEMES: readonly Theme[] = ['dark', 'light', 'system']
 const VOICE_OPTIONS: readonly CueVoice[] = ['female', 'male']
 const enter = (i: number) => FadeInDown.delay(i * 55).duration(550)
+
+const LAMPORTS = 1_000_000_000
+// What turning voice approvals on needs besides the allowance: Cue's fee money, the wrapped-SOL account's rent, the fee.
+const SETUP_RESERVE_SOL = 0.013
+
+/** Voice approvals: set an allowance once (one wallet signature), then say "approve" instead of signing. */
+function VoiceApprovalRows() {
+  const c = useCue()
+  const { account } = useMobileWallet()
+  const { client, cluster } = useAppCluster()
+  const queryClient = useQueryClient()
+  const allowance = useStore($voiceAllowance)
+  useStore($delegatedLamports) // re-render as the allowance is spent
+  useStore($triggers)
+  const balance = useGetBalance(account!.address).data?.value
+  const max = balance === undefined ? null : Math.max(0, Number(balance) / LAMPORTS - SETUP_RESERVE_SOL)
+  const [amount, setAmount] = useState(String(DEFAULT_ALLOWANCE_SOL))
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  if (allowance) {
+    return (
+      <Row
+        detail={`${(Number(allowanceLeft()) / LAMPORTS).toFixed(4)} SOL left to spend by voice · Revoke returns it`}
+        last
+        right={<RevokeButton />}
+        title="Voice approvals on"
+      />
+    )
+  }
+
+  async function turnOn() {
+    if (!account || busy) return
+    const sol = Number(amount.replace(',', '.'))
+    if (!(sol > 0)) return setError('Enter how much SOL Cue may spend by voice.')
+    if (max !== null && sol > max) return setError(`You can set aside up to ${max.toFixed(4)} SOL.`)
+    setBusy(true)
+    setError(null)
+    try {
+      const lamports = BigInt(Math.round(sol * LAMPORTS))
+      // The approval covers buy rules already waiting too: a new approval replaces the old one.
+      const approve = lamports + activeBuyLamports()
+      const result = await executeDelegationGrant({
+        account,
+        approveAmountLamports: approve,
+        chain: cluster.id,
+        client,
+        identity,
+        wrapAmountLamports: lamports,
+      })
+      setDelegatedLamports(approve)
+      setVoiceAllowance({ owner: account.address })
+      pushLogEntry({
+        amount: `${sol} SOL`,
+        detail: 'Say "approve" instead of signing, up to this much',
+        signature: result.signature,
+        status: 'Confirmed',
+        title: 'Voice approvals on',
+      })
+      await queryClient.invalidateQueries({ queryKey: ['get-balance'] })
+    } catch (e) {
+      setError(formatError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <View style={{ paddingVertical: 14 }}>
+      <Txt style={{ fontSize: 17, fontWeight: '600' }}>Voice approvals</Txt>
+      <Txt style={{ marginTop: 4 }} v="sub">
+        Say “approve” instead of signing. Cue can only spend what you set aside here, and Revoke gives back what’s left.
+      </Txt>
+      <View style={{ alignItems: 'center', flexDirection: 'row', gap: 10, marginTop: 14 }}>
+        <TextInput
+          accessibilityLabel="Allowance in SOL"
+          keyboardType="decimal-pad"
+          onChangeText={setAmount}
+          placeholder="0.5"
+          placeholderTextColor={c.muted}
+          style={{
+            backgroundColor: c.sep,
+            borderRadius: 14,
+            color: c.text,
+            flex: 1,
+            fontSize: 17,
+            paddingHorizontal: 14,
+            paddingVertical: 10,
+          }}
+          value={amount}
+        />
+        <Txt v="sub">SOL</Txt>
+        <Press label="Use the most I can" onPress={() => max !== null && setAmount(String(Number(max.toFixed(4))))}>
+          <Txt style={{ fontWeight: '600' }}>Max</Txt>
+        </Press>
+      </View>
+      {max !== null ? (
+        <Txt style={{ marginTop: 6 }} v="k">{`Up to ${max.toFixed(4)} SOL (keeps a little for fees)`}</Txt>
+      ) : null}
+      {error ? (
+        <Txt style={{ marginTop: 8 }} v="k">
+          {error}
+        </Txt>
+      ) : null}
+      <View style={{ marginTop: 14 }}>
+        <CueButton
+          label="Turn on"
+          loading={busy}
+          loadingLabel="Waiting for your wallet"
+          onPress={() => void turnOn()}
+        />
+      </View>
+    </View>
+  )
+}
 
 function RevokeButton() {
   const c = useCue()
@@ -67,6 +190,7 @@ function RevokeButton() {
         queryClient.invalidateQueries({ queryKey: ['get-transaction-signatures'] }),
       ])
       setDelegatedLamports(null)
+      setVoiceAllowance(null)
       const stopped = stopBuyTriggers('Permission revoked')
       pushLogEntry({
         amount: '—',
@@ -246,6 +370,7 @@ export function CueSettings() {
   const { activeTheme } = useTheme()
   const { contacts, wake } = useStore($cue)
   const delegated = useStore($delegatedLamports)
+  const voiceAllowance = useStore($voiceAllowance)
   const spoken = useStore($spoken)
   const voice = useStore($voice)
   const buyRules = useStore($triggers).filter((t) => t.kind === 'buy' && t.status === 'active').length
@@ -266,7 +391,10 @@ export function CueSettings() {
         <Animated.View entering={enter(1)}>
           <SectionLabel first>Permissions</SectionLabel>
           <Rows>
-            {delegated !== null ? (
+            <VoiceApprovalRows />
+          </Rows>
+          <Rows>
+            {voiceAllowance ? null : delegated !== null ? (
               <Animated.View exiting={FadeOutLeft.duration(260)} layout={LinearTransition}>
                 <Row
                   detail={`${buyRules} active buy rule${buyRules === 1 ? '' : 's'} · until you revoke`}

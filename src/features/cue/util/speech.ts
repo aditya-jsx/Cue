@@ -29,27 +29,35 @@ export const $voice = atom<CueVoice>(storage.getString(VOICE_KEY) === 'male' ? '
 export function setVoice(voice: CueVoice) {
   storage.set(VOICE_KEY, voice)
   $voice.set(voice)
-  say("Hi, I'm Cue. I'll keep an eye on your wallet.")
+  void say("Hi, I'm Cue. I'll keep an eye on your wallet.")
 }
 
 // Cue's own voice can sound like "Hey Cue" to the wake word, so detection pauses while it talks. Only the latest
 // utterance ends the pause: stopping one to start the next reports the old one as stopped after the new one began.
 let utterance = 0
-function say(text: string) {
+function say(text: string): Promise<void> {
   void Speech.stop()
   const id = ++utterance
-  const done = () => {
-    if (id === utterance) CueNative.setSpeaking(false)
-  }
   CueNative.setSpeaking(true)
-  // If the voice isn't on this phone, Android falls back to its default voice for the language.
-  Speech.speak(text, { language: 'en-US', onDone: done, onError: done, onStopped: done, voice: VOICES[$voice.get()] })
+  return new Promise((resolve) => {
+    const done = () => {
+      if (id === utterance) CueNative.setSpeaking(false)
+      resolve()
+    }
+    // If the voice isn't on this phone, Android falls back to its default voice for the language.
+    Speech.speak(text, { language: 'en-US', onDone: done, onError: done, onStopped: done, voice: VOICES[$voice.get()] })
+  })
+}
+
+/** Says `text` and resolves once it has been said (or cut off), e.g. before listening for the user's answer. */
+export function speakAndWait(text: string): Promise<void> {
+  if (!text || !$spoken.get()) return Promise.resolve()
+  return say(text)
 }
 
 /** Says `text`, cutting off anything still being said. */
 export function speak(text: string) {
-  if (!text || !$spoken.get()) return
-  say(text)
+  void speakAndWait(text)
 }
 
 /** Silences Cue, e.g. before the microphone opens so it never records its own voice. */

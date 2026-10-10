@@ -28,13 +28,18 @@ object AudioCapture {
   private const val SPEECH_START_FRAMES = 3
   private const val MIN_SPEECH_RMS = 600.0
   private const val MAX_NOISE_FLOOR = 800.0 // a calibration that caught speech would otherwise make speech count as silence
-  private const val MIN_QUIET_RMS = 300.0 // below this counts as silence; lower than the start level so soft words aren't cut off
+  private const val MIN_QUIET_RMS = 300.0
+  private const val MIN_VOICED_MS = 250 // shorter than any word: a sound this brief that's followed by quiet isn't speech // below this counts as silence; lower than the start level so soft words aren't cut off
 
   @Volatile private var running = false
   private var worker: Thread? = null
 
   @SuppressLint("MissingPermission") // RECORD_AUDIO is requested by the app before any listening starts
-  fun start(emit: (event: String, payload: Map<String, Any?>) -> Unit) {
+  /**
+   * `fixedMs` > 0 records exactly that long (after the chime) instead of waiting for the speaker to stop: for a one-word
+   * answer ("approve"), which is too short and quiet for end-of-speech detection to catch reliably.
+   */
+  fun start(fixedMs: Int = 0, emit: (event: String, payload: Map<String, Any?>) -> Unit) {
     stop()
     running = true
     worker = thread(name = "CueAudioCapture") {
@@ -67,6 +72,9 @@ object AudioCapture {
         var loudRun = 0
         var speaking = false
         var silentMs = 0
+        var voicedMs = 0
+        var recordedMs = 0
+        var heardSomething = false
         var elapsedMs = 0
 
         while (running) {
@@ -85,6 +93,7 @@ object AudioCapture {
 
           // Cue's own chime is still playing: neither the room nor the command.
           if (System.currentTimeMillis() < CueWakeWordBus.chimeUntil) continue
+          recordedMs += FRAME_MS
 
           // The first 200 ms measure the room, so the speech threshold adapts to a quiet room or a noisy one. The
           // quietest frame, not the average: the user may already be talking.
@@ -96,15 +105,32 @@ object AudioCapture {
           val quietThreshold = maxOf(noiseFloor * 2.0, MIN_QUIET_RMS)
           val copy = frame.copyOf()
 
+          if (fixedMs > 0) {
+            clip.write(toBytes(copy))
+            if (rms > threshold) heardSomething = true
+            if (recordedMs >= fixedMs) {
+              Log.d("CueAudioCapture", "fixed ${fixedMs}ms window, heard something: $heardSomething")
+              result = if (heardSomething) {
+                "onAudioCaptured" to mapOf("wav" to Base64.encodeToString(toWav(clip.toByteArray()), Base64.NO_WRAP))
+              } else {
+                "onAudioError" to mapOf("message" to "nospeech")
+              }
+              break
+            }
+            continue
+          }
+
           if (!speaking) {
             preRoll.addLast(copy)
             if (preRoll.size > PRE_ROLL_FRAMES) preRoll.removeFirst()
             loudRun = if (rms > threshold) loudRun + 1 else 0
             if (loudRun >= SPEECH_START_FRAMES) {
               speaking = true
+              Log.d("CueAudioCapture", "speech start at ${elapsedMs}ms rms=${rms.toInt()} threshold=${threshold.toInt()}")
               preRoll.forEach { clip.write(toBytes(it)) }
               preRoll.clear()
               silentMs = 0
+              voicedMs = 0
             } else if (elapsedMs >= NO_SPEECH_MS) {
               result = "onAudioError" to mapOf("message" to "nospeech")
               break
@@ -112,7 +138,17 @@ object AudioCapture {
           } else {
             clip.write(toBytes(copy))
             silentMs = if (rms < quietThreshold) silentMs + FRAME_MS else 0
+            if (rms >= quietThreshold) voicedMs += FRAME_MS
+            if (silentMs >= END_SILENCE_MS && voicedMs < MIN_VOICED_MS && elapsedMs < NO_SPEECH_MS) {
+              // A blip (the chime's echo, a tap), not speech: forget it and keep waiting for the user to talk.
+              Log.d("CueAudioCapture", "ignored a ${voicedMs}ms blip at ${elapsedMs}ms")
+              speaking = false
+              loudRun = 0
+              clip.reset()
+              continue
+            }
             if (silentMs >= END_SILENCE_MS || elapsedMs >= MAX_CLIP_MS) {
+              Log.d("CueAudioCapture", "speech end at ${elapsedMs}ms, ${voicedMs}ms voiced")
               result = "onAudioCaptured" to mapOf("wav" to Base64.encodeToString(toWav(clip.toByteArray()), Base64.NO_WRAP))
               break
             }

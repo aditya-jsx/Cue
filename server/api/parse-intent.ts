@@ -29,6 +29,22 @@ For the recipient: a Seeker name ends in ".skr" (spoken "alice dot S K R" or "al
 Never invent an amount, token or price the user didn't say. If you can tell which action they want but a value is missing or unintelligible, still set intent to that action, fill in what you did understand, leave the rest null, and put a short question for the missing part in reason.
 Set every field that doesn't apply to null.`
 
+// Voice approvals: after Cue reads an action back, the user's one-word answer. A command prompt drops a lone
+// "approve" as not-a-command, so answers get their own small task.
+const REPLY_SYSTEM = `Cue, a voice wallet, has just read an action back to the user and asked them to say "approve" or "decline". The audio is their answer.
+Write exactly what they said into "transcript" (an empty string if nothing was said).
+Set "answer" to "approve" only if they clearly said approve (or "approved", "I approve"). Set it to "decline" if they said decline, cancel, no, stop or don't. Anything else, or silence, is "unclear". Never guess "approve".`
+
+const REPLY_SCHEMA = {
+  additionalProperties: false,
+  properties: {
+    answer: { enum: ['approve', 'decline', 'unclear'], type: 'string' },
+    transcript: { type: 'string' },
+  },
+  required: ['answer', 'transcript'],
+  type: 'object',
+}
+
 const nullable = (schema: object) => ({ anyOf: [schema, { type: 'null' }] })
 
 const SCHEMA = {
@@ -156,6 +172,7 @@ export async function POST(request: Request): Promise<Response> {
     contacts?: unknown
     heard?: unknown
     mimeType?: unknown
+    mode?: unknown
     text?: unknown
     tokens?: unknown
   } | null
@@ -181,10 +198,11 @@ export async function POST(request: Request): Promise<Response> {
       ]
     : `${context}\nCommand: ${JSON.stringify(text)}${heard && heard !== text ? `\nRaw speech recognition: ${JSON.stringify(heard)}` : ''}`
 
+  const reply = body?.mode === 'reply' && Boolean(audio)
   const config = {
-    responseJsonSchema: SCHEMA,
+    responseJsonSchema: reply ? REPLY_SCHEMA : SCHEMA,
     responseMimeType: 'application/json',
-    systemInstruction: SYSTEM,
+    systemInstruction: reply ? REPLY_SYSTEM : SYSTEM,
     temperature: 0,
   }
   // Gemini answers "503 high demand" in bursts: retry briefly, and on the last try use the lighter model.
@@ -225,6 +243,16 @@ export async function POST(request: Request): Promise<Response> {
     const finish = response.candidates?.[0]?.finishReason
     if (!response.text || finish !== 'STOP') {
       return UNSUPPORTED("I couldn't work that out. Try saying it another way.")
+    }
+    if (reply) {
+      const answer = JSON.parse(response.text) as { answer?: unknown; transcript?: unknown }
+      return Response.json(
+        {
+          answer: answer.answer === 'approve' || answer.answer === 'decline' ? answer.answer : 'unclear',
+          transcript: typeof answer.transcript === 'string' ? answer.transcript.trim().slice(0, 200) : '',
+        },
+        { headers: NO_STORE },
+      )
     }
     const result = toCueIntent(JSON.parse(response.text) as Raw)
     return Response.json(audio ? result : { ...result, transcript: text }, { headers: NO_STORE })

@@ -5,6 +5,7 @@ import { clearSessionKey } from '@/features/cue/data-access/session-key'
 import { $spoken, $voice } from '@/features/cue/util/speech'
 import { wipeStore } from '@/features/cue/util/wipe-store'
 import { $delegatedLamports, $triggers } from '@/features/price-triggers/data-access/trigger-store'
+import { $voiceAllowance } from '@/features/cue/data-access/voice-allowance'
 import CueNative from '../../../../modules/cue-native'
 
 /**
@@ -21,6 +22,7 @@ export async function deleteAllCueData(): Promise<void> {
   $cue.set({ contacts: [], log: [], wake: true })
   $triggers.set([])
   $delegatedLamports.set(null)
+  $voiceAllowance.set(null)
   $spoken.set(true)
   $voice.set('female')
   $onboarded.set(false)

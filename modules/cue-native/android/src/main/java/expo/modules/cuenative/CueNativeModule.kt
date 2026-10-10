@@ -1,5 +1,6 @@
 package expo.modules.cuenative
 
+import android.app.KeyguardManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -89,6 +90,24 @@ class CueNativeModule : Module() {
         Icon.createWithResource(ctx, android.R.drawable.ic_btn_speak_now),
         ctx.mainExecutor,
       ) { result -> promise.resolve(result) }
+    }
+
+    // One spoken reply ("approve"/"decline") as base64 WAV, or null if nothing was said. The wake-word service records
+    // it when running (it holds the mic, also with the app in the background); otherwise it's recorded directly.
+    AsyncFunction("captureReply") { promise: Promise ->
+      val deliver: (String?) -> Unit = { promise.resolve(it) }
+      if (CueWakeWordBus.serviceRunning) {
+        CueWakeWordBus.replyRequest = deliver
+      } else {
+        AudioCapture.start(CueWakeWordService.REPLY_WINDOW_MS) { event, payload ->
+          deliver(if (event == "onAudioCaptured") payload["wav"] as? String else null)
+        }
+      }
+    }
+
+    Function("isDeviceLocked") {
+      val ctx = appContext.reactContext ?: throw Exceptions.ReactContextLost()
+      ctx.getSystemService(KeyguardManager::class.java).isKeyguardLocked
     }
 
     Function("stopWakeWordService") {

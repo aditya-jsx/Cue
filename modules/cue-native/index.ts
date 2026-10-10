@@ -12,9 +12,11 @@ type CueNativeEvents = {
 }
 
 declare class CueNativeModule extends NativeModule<CueNativeEvents> {
+  captureReply(): Promise<string | null>
   consumePendingClip(): string | null
   consumePendingWake(): boolean
   heartbeat(message: string): void
+  isDeviceLocked(): boolean
   isIgnoringBatteryOptimizations(): boolean
   notify(title: string, body: string): void
   requestAddTile(): Promise<number>

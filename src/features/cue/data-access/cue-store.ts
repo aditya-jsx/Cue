@@ -1,11 +1,15 @@
-import { isAddress } from '@solana/kit'
+import { address, isAddress } from '@solana/kit'
 import { atom } from 'nanostores'
 import { createMMKV } from 'react-native-mmkv'
 
+import { activeSolanaClient } from '@/features/cluster/data-access/active-client'
 import { APP_STORAGE_ID } from '@/features/cluster/data-access/create-cluster-props'
+import type { SolanaClient } from '@/features/cluster/data-access/create-solana-client'
+import { $voiceAllowance, allowanceLeft, voiceApprovalsOn } from '@/features/cue/data-access/voice-allowance'
+import { executeAllowanceSend } from '@/features/wallet/util/execute-allowance-send'
 import { ensureMicPermission } from '@/features/cue/util/mic-permission'
-import { speak, stopSpeaking } from '@/features/cue/util/speech'
-import { spokenConfirm, spokenResult } from '@/features/cue/util/spoken'
+import { speak, speakAndWait, stopSpeaking } from '@/features/cue/util/speech'
+import { spokenApproved, spokenConfirm, spokenResult } from '@/features/cue/util/spoken'
 import { askBackgroundAccessOnce } from '@/features/cue/util/background-access'
 import { type Intent, normalizeTranscript, WATCHABLE_TOKENS } from '@/features/cue/data-access/parse-intent'
 import { getDeviceId } from '@/features/cue/data-access/device-id'
@@ -17,12 +21,15 @@ import {
   setDeviceIdSource,
   understand,
   understandAudio,
+  understandReply,
 } from '@/features/cue/data-access/understand'
 import {
   createTrigger,
   formatUsd,
   type GuardAction,
+  $delegatedLamports,
   setDelegatedLamports,
+  spendDelegation,
   type TriggerDirection,
 } from '@/features/price-triggers/data-access/trigger-store'
 import { $prices, type Symbol } from '@/features/prices/data-access/price-store'
@@ -182,10 +189,17 @@ export function prepareIntent(intent: Intent, skrRecipient?: { address: string; 
       const token = prices[intent.token as Symbol]
       if (!prices.SOL || !token) return nope(LOADING_PRICES)
       if (intent.amount_usd > MAX_RULE_USD) return nope(`Cue can set aside up to $${MAX_RULE_USD} per rule for now.`)
+      const amountLamports = BigInt(Math.round((intent.amount_usd / prices.SOL.usd) * 1e9))
+      // With voice approvals on, buy rules draw from the allowance: a new wallet approval would replace it.
+      if (voiceApprovalsOn() && amountLamports > allowanceLeft()) {
+        return nope(
+          `That's more than your voice allowance has left (${sol(allowanceLeft())} SOL). Raise it in Settings.`,
+        )
+      }
       const expiresAt = intent.expires_at ? Date.parse(intent.expires_at) : NaN
       return {
         // Spends delegated WSOL, so the dollar amount is sized in SOL at today's price.
-        amountLamports: BigInt(Math.round((intent.amount_usd / prices.SOL.usd) * 1e9)),
+        amountLamports,
         amountUsd: intent.amount_usd,
         direction: intent.condition,
         expiresAt: Number.isFinite(expiresAt) ? expiresAt : Date.now() + DAY,
@@ -285,10 +299,24 @@ async function prepare(intent: Intent): Promise<Plan> {
   return prepareIntent(intent, { address: owner, name: `${label}.skr` })
 }
 
+/**
+ * A spoken command Cue can't carry out: back to Home, and the problem is said out loud (and shown on Home, in case the
+ * sound is off). The drawer is only for commands Cue can actually do.
+ */
+export const $homeNotice = atom<{ canEdit: boolean; reason: string; text: string } | null>(null)
+
 function route(text: string, plan: Plan, draft: Draft | null) {
   $flow.set({ ...$flow.get(), draft, plan, signature: null, text })
+  // The manual form keeps its sheet, so what was typed isn't thrown away.
+  if (plan.kind === 'nope' && $flow.get().stack[0] !== 'compose') {
+    $flow.set({ ...$flow.get(), stack: [] })
+    $homeNotice.set({ canEdit: Boolean(draft && EDITABLE[draft.intent]), reason: plan.reason, text })
+    speak(plan.reason)
+    return
+  }
   push(plan.kind === 'nope' || plan.kind === 'answer' ? 'nope' : 'confirm')
-  speak(spokenConfirm(plan)) // say it back, so a misheard amount or name is caught by ear
+  // Said back so a misheard amount or name is caught by ear; with voice approvals the sheet says it and then listens.
+  if (!canApproveByVoice(plan)) speak(spokenConfirm(plan))
 }
 
 export const flow = {
@@ -401,6 +429,7 @@ export const flow = {
   /** Mic button or wake word. No-ops if a flow screen is already open, so a stray wake word can't interrupt it. */
   async startLiveListening(source: 'mic' | 'wake' = 'mic') {
     if (!idle()) return
+    $homeNotice.set(null)
     stopSpeaking() // the microphone is about to open: Cue must not record its own voice
     if (!(await ensureMicPermission())) {
       if (idle()) {
@@ -434,20 +463,24 @@ export const flow = {
 
 /* ---------- execution side effects (called once the user has confirmed) ---------- */
 
-export function recordSend(signature: string) {
-  const { plan } = $flow.get()
+export function recordSend(signature: string, plan: Plan = $flow.get().plan, detail = 'By you') {
   if (plan.kind !== 'send') return
   pushLogEntry({
     amount: `${plan.amount} SOL`,
-    detail: 'By you',
+    detail,
     signature,
     status: 'Confirmed',
     title: `Sent to ${plan.recipientName}`,
   })
 }
 
-export function activateBuy(ownerAddress: string, signature: string, totalApprovedLamports: bigint) {
-  const { plan } = $flow.get()
+export function activateBuy(
+  ownerAddress: string,
+  signature: string,
+  totalApprovedLamports: bigint,
+  plan: Plan = $flow.get().plan,
+  detail = 'Permission granted',
+) {
   if (plan.kind !== 'buy') return
   createTrigger({
     amountLamports: plan.amountLamports.toString(),
@@ -462,7 +495,7 @@ export function activateBuy(ownerAddress: string, signature: string, totalApprov
   setDelegatedLamports(totalApprovedLamports)
   pushLogEntry({
     amount: `$${plan.amountUsd}`,
-    detail: 'Permission granted',
+    detail,
     signature,
     status: 'Confirmed',
     title: `Rule set: buy ${plan.symbol} ${plan.direction} ${formatUsd(plan.targetUsd)}`,
@@ -470,8 +503,7 @@ export function activateBuy(ownerAddress: string, signature: string, totalApprov
   askBackgroundAccessOnce()
 }
 
-export function activateGuard(ownerAddress: string) {
-  const { plan } = $flow.get()
+export function activateGuard(ownerAddress: string, plan: Plan = $flow.get().plan) {
   if (plan.kind !== 'guard') return
   createTrigger({
     action: plan.action,
@@ -491,8 +523,7 @@ export function activateGuard(ownerAddress: string) {
   askBackgroundAccessOnce()
 }
 
-export function activateAlert(ownerAddress: string) {
-  const { plan } = $flow.get()
+export function activateAlert(ownerAddress: string, plan: Plan = $flow.get().plan) {
   if (plan.kind !== 'alert') return
   createTrigger({
     direction: plan.direction,
@@ -529,6 +560,18 @@ export async function understandOffScreen(wav: string) {
   const result = await hear(wav)
   if (result && !result.transcript) {
     CueNative.notify("Cue didn't hear a command", 'Say "Hey Cue" and try again')
+    return
+  }
+  const plan = result ? await prepare(result.intent) : null
+  if (result && plan?.kind === 'nope') {
+    // Same as in the app: say what's wrong, no "tap to review".
+    CueNative.notify("Cue can't do that", `"${result.transcript}": ${plan.reason}`)
+    speak(plan.reason)
+    return
+  }
+  // Voice approvals, phone unlocked: the whole exchange happens by voice, wherever the user is.
+  if (result && plan && canApproveByVoice(plan) && !CueNative.isDeviceLocked()) {
+    await approveByVoice(plan, $voiceAllowance.get()!.owner, activeSolanaClient(), 'notify')
     return
   }
   heardOffScreen = { alreadyHeard: result, at: Date.now(), wav }
@@ -580,4 +623,105 @@ export const actions = {
     if (wake) CueNative.startWakeWordService()
     else CueNative.stopWakeWordService()
   },
+}
+
+/* ---------- voice approvals ---------- */
+
+const sol = (lamports: bigint) => Number((Number(lamports) / 1e9).toFixed(4)).toString()
+
+/**
+ * Whether this plan can be approved by saying "approve": voice approvals are on, and it fits what's left of the
+ * allowance. Sends only go to a saved contact or a Seeker name, never a pasted address, so a misheard or mistyped
+ * address can't be paid by voice.
+ */
+export function canApproveByVoice(plan: Plan): boolean {
+  if (!voiceApprovalsOn()) return false
+  if (plan.kind === 'guard' || plan.kind === 'alert') return true
+  if (plan.kind === 'buy') return plan.amountLamports <= allowanceLeft() // checked in prepareIntent too
+  if (plan.kind === 'send') {
+    const toNamed = !plan.recipientName.includes('…')
+    return toNamed && BigInt(Math.round(plan.amount * 1e9)) <= allowanceLeft()
+  }
+  return false
+}
+
+/**
+ * Listens for one reply. Approves only when the assistant heard "approve" and the words say so too (belt and braces:
+ * money moves on this); anything else, or silence, declines.
+ */
+export async function hearApproval(): Promise<{ approved: boolean; heard: string }> {
+  const wav = await CueNative.captureReply().catch(() => null)
+  const reply = wav ? await understandReply(wav) : null
+  const heard = reply?.transcript ?? ''
+  if (__DEV__) console.log('[CueApproval] reply:', JSON.stringify(reply), wav ? `${wav.length} b64 chars` : 'no audio')
+  const words = heard.toLowerCase()
+  return {
+    approved: reply?.answer === 'approve' && /\bapprov/.test(words) && !/\b(not|don't|decline|cancel)\b/.test(words),
+    heard,
+  }
+}
+
+/** What Cue says when the reply wasn't "approve", so a misheard yes isn't a silent no. */
+export const declinedBecause = (heard: string) =>
+  heard ? `I heard "${heard}", so nothing was done.` : "I didn't hear an answer, so nothing was done."
+
+/** Does what the plan says, from the voice allowance: no wallet prompt. Returns the signature when money moved. */
+export async function executeWithAllowance(plan: Plan, owner: string, client: SolanaClient): Promise<string | null> {
+  if (plan.kind === 'send') {
+    const lamports = BigInt(Math.round(plan.amount * 1e9))
+    // Seeker names can change hands: look it up again right before paying, as the signed path does.
+    const label = skrLabel(plan.recipientName)
+    if (label && (await resolveSkr(mainnetRpc, label)) !== plan.recipient) {
+      throw new Error(`${plan.recipientName} now points to a different wallet. Nothing was sent.`)
+    }
+    const signature = await executeAllowanceSend({
+      client,
+      lamports,
+      ownerAddress: address(owner),
+      recipient: address(plan.recipient),
+    })
+    spendDelegation(lamports)
+    recordSend(signature, plan, 'Approved by voice')
+    return signature
+  }
+  if (plan.kind === 'buy') activateBuy(owner, '', $delegatedLamports.get() ?? 0n, plan, 'Approved by voice')
+  if (plan.kind === 'guard') activateGuard(owner, plan)
+  if (plan.kind === 'alert') activateAlert(owner, plan)
+  return null
+}
+
+/**
+ * The spoken exchange: say what Cue understood, listen, and act only on "approve". `report` is how the outcome is
+ * told: in the app the screens show it; off screen a notification does.
+ */
+export async function approveByVoice(
+  plan: Plan,
+  owner: string,
+  client: SolanaClient,
+  report: 'notify' | 'screen',
+  stillWanted: () => boolean = () => true,
+): Promise<{ approved: boolean; signature: string | null }> {
+  await speakAndWait(spokenConfirm(plan, true))
+  const { approved, heard } = await hearApproval()
+  if (!stillWanted()) return { approved: false, signature: null } // the user tapped Decline (or left) meanwhile
+  if (!approved) {
+    speak(heard.toLowerCase().includes('decline') ? 'Okay, cancelled.' : declinedBecause(heard))
+    if (report === 'notify') CueNative.notify('Cancelled', spokenConfirm(plan).replace(' Tap continue.', ''))
+    return { approved: false, signature: null }
+  }
+  const acknowledged = speakAndWait(spokenApproved(plan))
+  try {
+    const signature = await executeWithAllowance(plan, owner, client)
+    await acknowledged
+    if (report === 'notify') {
+      speak(spokenResult(plan))
+      CueNative.notify('Done', spokenResult(plan))
+    } // in the app, the success screen says it
+    return { approved: true, signature }
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error)
+    speak("That didn't go through. Nothing was sent.")
+    if (report === 'notify') CueNative.notify("That didn't go through", reason)
+    throw error
+  }
 }

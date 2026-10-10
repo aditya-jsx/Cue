@@ -64,6 +64,7 @@ class CueWakeWordService : Service() {
     }
 
     running = true
+    CueWakeWordBus.serviceRunning = true
     thread(name = "CueWakeWordLoop") { runDetectionLoop() }
     return START_STICKY
   }
@@ -101,6 +102,18 @@ class CueWakeWordService : Service() {
         offset += n
       }
       if (!running || offset < chunk.size) continue
+
+      // The app asked to hear the user's answer ("approve"/"decline"): this service holds the mic, also in the
+      // background, so it records the reply the same way it records an off-screen command.
+      val deliver = CueWakeWordBus.replyRequest
+      if (deliver != null) {
+        CueWakeWordBus.replyRequest = null
+        playChime()
+        deliver(recordClip(record, REPLY_WINDOW_MS))
+        cooldownFramesLeft = COOLDOWN_FRAMES
+        recentHits = 0
+        continue
+      }
 
       val score = detector?.processChunk(chunk) ?: continue
 
@@ -146,16 +159,22 @@ class CueWakeWordService : Service() {
    * (the wake-word recording is paused meanwhile, one mic client at a time) and hands the clip over in a notification.
    * Nothing is understood or done here: tapping the notification opens Cue, which runs the usual confirmation.
    */
-  private fun captureCommandInBackground(record: AudioRecord) {
+  /** Pauses the wake-word recording, records one utterance, resumes. The clip, or null when nothing was said. */
+  private fun recordClip(record: AudioRecord, fixedMs: Int = 0): String? {
     record.stop()
     val done = CountDownLatch(1)
     var clip: String? = null
-    AudioCapture.start { event, payload ->
+    AudioCapture.start(fixedMs) { event, payload ->
       if (event == "onAudioCaptured") clip = payload["wav"] as? String
       done.countDown()
     }
     if (!done.await(CAPTURE_WAIT_SECONDS, TimeUnit.SECONDS)) AudioCapture.stop()
     record.startRecording()
+    return clip
+  }
+
+  private fun captureCommandInBackground(record: AudioRecord) {
+    val clip = recordClip(record)
 
     // The app is alive in the background: it asks the assistant what was said and notifies with that.
     val toApp = CueWakeWordBus.onClip
@@ -239,6 +258,9 @@ class CueWakeWordService : Service() {
 
   override fun onDestroy() {
     running = false
+    CueWakeWordBus.serviceRunning = false
+    CueWakeWordBus.replyRequest?.invoke(null) // nobody left to record it
+    CueWakeWordBus.replyRequest = null
     super.onDestroy()
   }
 
@@ -252,6 +274,7 @@ class CueWakeWordService : Service() {
     private const val HITS_REQUIRED = 3 // cuts single-frame noise spikes
     private const val WINDOW_MASK = 0b111111 // the last 6 frames, ~480ms
     private const val CHIME_MS = 1500L
+    const val REPLY_WINDOW_MS = 3_500 // long enough to say "approve" after the chime, without guessing when they stopped
     private const val CAPTURE_WAIT_SECONDS = 12L
     private const val COOLDOWN_FRAMES = 25 // ~2s @ 80ms/frame, avoid re-firing on the same utterance
   }
@@ -267,6 +290,11 @@ object CueWakeWordBus {
 
   /** Until when the "Hey Cue" chime is playing; the command recording ignores that audio. */
   @Volatile var chimeUntil: Long = 0L
+
+  @Volatile var serviceRunning = false
+
+  /** Set by the app to hear one reply; the detection loop records it and calls back with the clip (or null). */
+  @Volatile var replyRequest: ((wav: String?) -> Unit)? = null
 
   /**
    * When the last wake happened. With the app closed, nothing in JS is listening yet when the service detects "Hey Cue",
