@@ -62,6 +62,7 @@ import { $prices, type Symbol } from '@/features/prices/data-access/price-store'
 import CueNative from '../../../modules/cue-native'
 import { executeDelegationGrant } from '@/features/wallet/util/execute-delegation'
 import { executeInstantSend } from '@/features/wallet/util/execute-instant-send'
+import { mainnetRpc, resolveSkr, skrLabel } from '@/features/cue/data-access/skr'
 import { formatError } from '@/features/wallet/util/format-error'
 import { IOS_EASING, useCue } from '@/features/cue/cue-theme'
 import { Backdrop, CueButton, Glass, KV, Press, Ring, Rows, Segment, Txt } from '@/features/cue/ui/cue-ui'
@@ -403,6 +404,11 @@ function Confirm() {
     if (plan.kind !== 'send' || sendSol.isPending) return
     setError(null)
     try {
+      // Seeker names can change hands: look it up again now, so the money goes where the screen says.
+      const label = skrLabel(plan.recipientName)
+      if (label && (await resolveSkr(mainnetRpc, label)) !== plan.recipient) {
+        return setError(`${plan.recipientName} now points to a different wallet. Nothing was sent; start again.`)
+      }
       const signature = await sendSol.mutateAsync(plan)
       recordSend(signature)
       flow.signed(signature)
@@ -632,7 +638,7 @@ function Compose() {
     if (kind === 'send') {
       const sol = toNumber(amount)
       if (!(sol > 0)) return setError('Enter how much SOL to send.')
-      if (!to.trim()) return setError('Pick a contact or paste an address.')
+      if (!to.trim()) return setError('Pick a contact, or enter a .skr name or address.')
       flow.submitIntent(
         { amount: sol, intent: 'instant_send', recipient: to.trim(), token: 'SOL' },
         `Send ${sol} SOL to ${to.trim()}`,
@@ -689,9 +695,9 @@ function Compose() {
             <Field
               autoCapitalize="none"
               autoCorrect={false}
-              label="Or paste an address"
+              label="Or a Seeker name or address"
               onChangeText={setTo}
-              placeholder="Wallet address"
+              placeholder="alice.skr or wallet address"
               value={contacts.some((ct) => ct.name === to) ? '' : to}
             />
           </>

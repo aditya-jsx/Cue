@@ -9,6 +9,7 @@ import { spokenConfirm, spokenResult } from '@/features/cue/util/spoken'
 import { askBackgroundAccessOnce } from '@/features/cue/util/background-access'
 import { type Intent, normalizeTranscript, WATCHABLE_TOKENS } from '@/features/cue/data-access/parse-intent'
 import { getDeviceId } from '@/features/cue/data-access/device-id'
+import { mainnetRpc, resolveSkr, skrLabel } from '@/features/cue/data-access/skr'
 import {
   assistantConfigured,
   type Draft,
@@ -156,7 +157,7 @@ export function speechHints(): string[] {
 }
 
 /** Deterministic validation between the parser and anything that executes — the same gate for voice and manual. */
-export function prepareIntent(intent: Intent): Plan {
+export function prepareIntent(intent: Intent, skrRecipient?: { address: string; name: string }): Plan {
   const prices = $prices.get()
   switch (intent.intent) {
     case 'unsupported':
@@ -164,7 +165,7 @@ export function prepareIntent(intent: Intent): Plan {
     case 'instant_send': {
       if (intent.token !== 'SOL') return nope(`I can only send SOL for now, not ${intent.token}.`)
       if (!(intent.amount > 0)) return nope('The amount must be more than zero.')
-      const to = resolveRecipient(intent.recipient)
+      const to = skrRecipient ?? resolveRecipient(intent.recipient)
       if (!to) return nope(`I don't have a contact named ${intent.recipient}.`)
       return { amount: intent.amount, kind: 'send', recipient: to.address, recipientName: to.name }
     }
@@ -246,6 +247,19 @@ const stillListening = (ticket: number) => {
   return ticket === understanding && stack.length === 1 && stack[0] === 'listen'
 }
 
+/**
+ * prepareIntent, after looking up a Seeker name ("alice.skr") on mainnet, so the confirmation shows the wallet the money
+ * would go to. An unregistered name or a failed lookup is said plainly, never guessed at.
+ */
+async function prepare(intent: Intent): Promise<Plan> {
+  const label = intent.intent === 'instant_send' ? skrLabel(intent.recipient) : null
+  if (!label) return prepareIntent(intent)
+  const owner = await resolveSkr(mainnetRpc, label).catch(() => undefined)
+  if (owner === undefined) return nope(`I couldn't look up ${label}.skr right now. Try again in a moment.`)
+  if (!owner) return nope(`${label}.skr isn't a registered Seeker name.`)
+  return prepareIntent(intent, { address: owner, name: `${label}.skr` })
+}
+
 function route(text: string, plan: Plan, draft: Draft | null) {
   $flow.set({ ...$flow.get(), draft, plan, signature: null, text })
   push(plan.kind === 'nope' ? 'nope' : 'confirm')
@@ -269,9 +283,10 @@ export const flow = {
       raw,
       $cue.get().contacts.map((c) => c.name),
     )
+    const plan = await prepare(intent)
     // Cancelled, or a newer request started, while Claude was thinking: drop this answer.
     if (!stillListening(ticket)) return
-    route(text, prepareIntent(intent), draft)
+    route(text, plan, draft)
   },
   /** A recorded clip goes to the assistant, which hears and parses it. Returns false if it couldn't be reached. */
   async finishAudio(wav: string, alreadyHeard?: Heard): Promise<boolean> {
@@ -285,7 +300,9 @@ export const flow = {
       else route('', nope("I didn't catch that."), null)
       return true
     }
-    route(result.transcript, prepareIntent(result.intent), result.draft)
+    const plan = await prepare(result.intent)
+    if (!stillListening(ticket)) return true
+    route(result.transcript, plan, result.draft)
     return true
   },
   /** A command "Hey Cue" heard while the app was off screen: the usual understanding and confirmation, no mic needed. */
@@ -382,8 +399,11 @@ export const flow = {
   },
   setTranscript: (text: string) => $flow.set({ ...$flow.get(), text }),
   /** Manual entry: the form builds the same Intent the parser would, and goes through the same gate. */
-  submitIntent(intent: Intent, text: string) {
-    route(text, prepareIntent(intent), intent.intent === 'unsupported' ? null : intent)
+  async submitIntent(intent: Intent, text: string) {
+    const ticket = ++understanding
+    const plan = await prepare(intent)
+    if (ticket !== understanding || $flow.get().stack[0] !== 'compose') return // closed while the name was looked up
+    route(text, plan, intent.intent === 'unsupported' ? null : intent)
   },
 }
 

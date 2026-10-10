@@ -1,5 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons'
 import { useStore } from '@nanostores/react'
+import { useQuery } from '@tanstack/react-query'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { Alert, ScrollView, View } from 'react-native'
 import Animated, { FadeInDown, LinearTransition } from 'react-native-reanimated'
@@ -7,6 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { useAppCluster } from '@/features/cluster/data-access/cluster-provider'
 import { flow, SUGGESTIONS } from '@/features/cue/data-access/cue-store'
+import { mainnetRpc, skrNamesOf } from '@/features/cue/data-access/skr'
 import { $triggers, cancelTrigger, describeTrigger } from '@/features/price-triggers/data-access/trigger-store'
 import { useCue } from '@/features/cue/cue-theme'
 import { CuePage, Glass, Press, Ring, Row, Rows, SectionLabel, Txt } from '@/features/cue/ui/cue-ui'
@@ -42,6 +44,13 @@ export function CueHome() {
   const balance = useGetBalance(account!.address)
   const value = balance.data?.value
   const address = account!.address.toString()
+  // The user's Seeker name, shown beside (never instead of) the address: anyone can send a name to any wallet.
+  const { data: skrName } = useQuery({
+    queryFn: () => skrNamesOf(mainnetRpc, account!.address).then((names) => names[0] ?? null),
+    queryKey: ['skr-name', address],
+    retry: false,
+    staleTime: 60 * 60_000,
+  })
   const tabBarTop = insets.bottom + 14 + 68
 
   return (
@@ -63,7 +72,7 @@ export function CueHome() {
         >
           <Txt style={{ fontSize: 22, fontWeight: '700', letterSpacing: -0.66 }}>Cue</Txt>
           <Glass radius={999} style={{ paddingHorizontal: 13, paddingVertical: 7 }}>
-            <Txt v="mono">{`${address.slice(0, 4)}…${address.slice(-4)}`}</Txt>
+            <Txt v="mono">{`${skrName ? `${skrName} · ` : ''}${address.slice(0, 4)}…${address.slice(-4)}`}</Txt>
           </Glass>
         </Animated.View>
 
