@@ -17,6 +17,7 @@ declare class CueNativeModule extends NativeModule<CueNativeEvents> {
   heartbeat(message: string): void
   isIgnoringBatteryOptimizations(): boolean
   notify(title: string, body: string): void
+  requestAddTile(): Promise<number>
   requestIgnoreBatteryOptimizations(): void
   setSpeaking(speaking: boolean): void
   startAudioCapture(): void

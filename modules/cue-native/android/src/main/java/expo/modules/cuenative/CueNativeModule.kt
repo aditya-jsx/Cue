@@ -4,6 +4,11 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.app.StatusBarManager
+import android.content.ComponentName
+import android.graphics.drawable.Icon
+import android.os.Build
+import expo.modules.kotlin.Promise
 import android.content.Intent
 import android.net.Uri
 import android.os.PowerManager
@@ -71,6 +76,19 @@ class CueNativeModule : Module() {
     // after covers the room's echo.
     Function("setSpeaking") { speaking: Boolean ->
       CueWakeWordBus.quietUntil = System.currentTimeMillis() + if (speaking) 30_000 else 700
+    }
+
+    // Android 13+: the system asks the user to add the "Talk to Cue" tile, so nobody has to dig through the
+    // Quick Settings editor. Resolves with Android's answer code, or -1 where the request doesn't exist.
+    AsyncFunction("requestAddTile") { promise: Promise ->
+      val ctx = appContext.reactContext ?: throw Exceptions.ReactContextLost()
+      if (Build.VERSION.SDK_INT < 33) return@AsyncFunction promise.resolve(-1)
+      ctx.getSystemService(StatusBarManager::class.java).requestAddTileService(
+        ComponentName(ctx, CueTileService::class.java),
+        "Talk to Cue",
+        Icon.createWithResource(ctx, android.R.drawable.ic_btn_speak_now),
+        ctx.mainExecutor,
+      ) { result -> promise.resolve(result) }
     }
 
     Function("stopWakeWordService") {

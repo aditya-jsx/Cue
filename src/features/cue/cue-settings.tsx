@@ -37,6 +37,7 @@ import { CuePage, Press, Row, Rows, SectionLabel, Segment, Txt } from '@/feature
 import { setTheme, type Theme, useTheme } from '@/features/shell/data-access/use-theme'
 import { executeDelegationRevoke } from '@/features/wallet/util/execute-delegation'
 import { formatError } from '@/features/wallet/util/format-error'
+import CueNative from '../../../modules/cue-native'
 
 const THEMES: readonly Theme[] = ['dark', 'light', 'system']
 const VOICE_OPTIONS: readonly CueVoice[] = ['female', 'male']
@@ -141,6 +142,32 @@ function PollStatsRow() {
   return (
     <Pressable accessibilityRole="button" onPress={() => setText(read())}>
       <Row detail={text} title="Background polls" />
+    </Pressable>
+  )
+}
+
+/** Offers the "Talk to Cue" Quick Settings tile; Android shows its own add-tile prompt. */
+function TileRow() {
+  const [status, setStatus] = useState<string | null>(null)
+  async function add() {
+    const result = await CueNative.requestAddTile().catch(() => -1)
+    // Android's answer codes: 2 added, 1 already there, 0 declined; anything else means it couldn't ask.
+    setStatus(
+      result === 2 || result === 1
+        ? 'Added. Swipe down from anywhere and tap it to talk.'
+        : result === 0
+          ? 'Not added.'
+          : 'Add it yourself: Quick Settings, edit, then drag in "Talk to Cue".',
+    )
+  }
+  return (
+    <Pressable accessibilityRole="button" onPress={() => void add()}>
+      <Row
+        detail={status ?? 'One swipe down from any app, and Cue is listening'}
+        last
+        right={<Txt v="sub">Add</Txt>}
+        title="Quick Settings tile"
+      />
     </Pressable>
   )
 }
@@ -274,7 +301,6 @@ export function CueSettings() {
               title="Spoken replies"
             />
             <Row
-              last
               right={
                 <Segment
                   onChange={(i) => setVoice(VOICE_OPTIONS[i])}
@@ -285,6 +311,7 @@ export function CueSettings() {
               }
               title="Voice"
             />
+            <TileRow />
           </Rows>
         </Animated.View>
 
