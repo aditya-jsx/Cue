@@ -19,7 +19,7 @@ class CueNativeModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("CueNative")
 
-    Events("onWakeWordDetected", "onSpeechPartial", "onSpeechResult", "onSpeechError", "onAudioCaptured", "onAudioError")
+    Events("onWakeWordDetected", "onSpeechPartial", "onSpeechResult", "onSpeechError", "onAudioCaptured", "onAudioError", "onBackgroundCommand")
 
     Function("startHeartbeatService") {
       val ctx = appContext.reactContext ?: throw Exceptions.ReactContextLost()
@@ -39,6 +39,14 @@ class CueNativeModule : Module() {
       at != 0L && System.currentTimeMillis() - at < 20_000
     }
 
+    // The command "Hey Cue" heard while the app was off screen, once, if it is still fresh.
+    Function("consumePendingClip") {
+      val clip = CueWakeWordBus.pendingClip
+      val at = CueWakeWordBus.pendingClipAt
+      CueWakeWordBus.pendingClip = null
+      if (System.currentTimeMillis() - at < CueWakeWordBus.CLIP_LIFETIME_MS) clip else null
+    }
+
     // Android may pause a backgrounded app with the screen off unless the user exempts it from battery optimisation.
     Function("isIgnoringBatteryOptimizations") {
       val ctx = appContext.reactContext ?: throw Exceptions.ReactContextLost()
@@ -54,12 +62,20 @@ class CueNativeModule : Module() {
 
     Function("startWakeWordService") {
       CueWakeWordBus.onDetected = { score -> sendEvent("onWakeWordDetected", mapOf("score" to score)) }
+      CueWakeWordBus.onClip = { wav -> sendEvent("onBackgroundCommand", mapOf("wav" to wav)) }
       val ctx = appContext.reactContext ?: throw Exceptions.ReactContextLost()
       ctx.startForegroundService(Intent(ctx, CueWakeWordService::class.java))
     }
 
+    // While Cue talks the wake word is ignored. Capped, so a lost "done" can't mute it for good; a short tail
+    // after covers the room's echo.
+    Function("setSpeaking") { speaking: Boolean ->
+      CueWakeWordBus.quietUntil = System.currentTimeMillis() + if (speaking) 30_000 else 700
+    }
+
     Function("stopWakeWordService") {
       CueWakeWordBus.onDetected = null
+      CueWakeWordBus.onClip = null
       val ctx = appContext.reactContext ?: throw Exceptions.ReactContextLost()
       ctx.stopService(Intent(ctx, CueWakeWordService::class.java))
     }

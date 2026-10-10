@@ -32,13 +32,14 @@ import { APP_STORAGE_ID } from '@/features/cluster/data-access/create-cluster-pr
 import { askBackgroundAccess, isBackgroundAllowed } from '@/features/cue/util/background-access'
 import { resetOnboarding } from '@/features/cue/data-access/onboarding'
 import { deleteAllCueData } from '@/features/cue/util/delete-data'
-import { $spoken, setSpoken } from '@/features/cue/util/speech'
+import { $spoken, $voice, type CueVoice, setSpoken, setVoice } from '@/features/cue/util/speech'
 import { CuePage, Press, Row, Rows, SectionLabel, Segment, Txt } from '@/features/cue/ui/cue-ui'
 import { setTheme, type Theme, useTheme } from '@/features/shell/data-access/use-theme'
 import { executeDelegationRevoke } from '@/features/wallet/util/execute-delegation'
 import { formatError } from '@/features/wallet/util/format-error'
 
 const THEMES: readonly Theme[] = ['dark', 'light', 'system']
+const VOICE_OPTIONS: readonly CueVoice[] = ['female', 'male']
 const enter = (i: number) => FadeInDown.delay(i * 55).duration(550)
 
 function RevokeButton() {
@@ -219,6 +220,7 @@ export function CueSettings() {
   const { contacts, wake } = useStore($cue)
   const delegated = useStore($delegatedLamports)
   const spoken = useStore($spoken)
+  const voice = useStore($voice)
   const buyRules = useStore($triggers).filter((t) => t.kind === 'buy' && t.status === 'active').length
   const { disconnect } = useMobileWallet()
 
@@ -268,9 +270,20 @@ export function CueSettings() {
             />
             <Row
               detail="Cue says back what it understood"
-              last
               right={<Toggle label="Spoken replies" on={spoken} onPress={() => setSpoken(!spoken)} />}
               title="Spoken replies"
+            />
+            <Row
+              last
+              right={
+                <Segment
+                  onChange={(i) => setVoice(VOICE_OPTIONS[i])}
+                  options={['Female', 'Male']}
+                  style={{ width: 180 }}
+                  value={VOICE_OPTIONS.indexOf(voice)}
+                />
+              }
+              title="Voice"
             />
           </Rows>
         </Animated.View>

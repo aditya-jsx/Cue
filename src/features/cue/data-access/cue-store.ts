@@ -274,12 +274,9 @@ export const flow = {
     route(text, prepareIntent(intent), draft)
   },
   /** A recorded clip goes to the assistant, which hears and parses it. Returns false if it couldn't be reached. */
-  async finishAudio(wav: string): Promise<boolean> {
+  async finishAudio(wav: string, alreadyHeard?: Heard): Promise<boolean> {
     const ticket = ++understanding
-    const result = await understandAudio(
-      wav,
-      $cue.get().contacts.map((c) => c.name),
-    )
+    const result = alreadyHeard ?? (await hear(wav))
     if (!stillListening(ticket)) return true
     if (!result) return false
     if (!result.transcript) {
@@ -290,6 +287,22 @@ export const flow = {
     }
     route(result.transcript, prepareIntent(result.intent), result.draft)
     return true
+  },
+  /** A command "Hey Cue" heard while the app was off screen: the usual understanding and confirmation, no mic needed. */
+  async startFromClip(wav: string, alreadyHeard?: Heard) {
+    if (!idle()) return
+    $flow.set({
+      ...$flow.get(),
+      engine: 'none',
+      live: true,
+      micBlocked: false,
+      notice: null,
+      signature: null,
+      source: 'wake',
+      stack: ['listen'],
+      text: '',
+    })
+    if (!(await flow.finishAudio(wav, alreadyHeard))) flow.useAndroidFallback()
   },
   /** The assistant is unreachable: switch to Android's recognizer so voice still works, and say why. */
   useAndroidFallback() {
@@ -434,6 +447,39 @@ export function activateGuard(ownerAddress: string) {
 }
 
 /* ---------- wake word ---------- */
+
+type Heard = NonNullable<Awaited<ReturnType<typeof understandAudio>>>
+const hear = (wav: string) =>
+  understandAudio(
+    wav,
+    $cue.get().contacts.map((c) => c.name),
+  )
+const HEARD_LIFETIME_MS = 120_000
+let heardOffScreen: { alreadyHeard: Heard | null; at: number; wav: string } | null = null
+
+/**
+ * "Hey Cue" plus a command while the app was off screen: ask the assistant now, so the notification can say what was
+ * heard (or that nothing was) instead of making the user open the app to find out. Opening it then confirms as usual.
+ */
+export async function understandOffScreen(wav: string) {
+  const result = await hear(wav)
+  if (result && !result.transcript) {
+    CueNative.notify("Cue didn't hear a command", 'Say "Hey Cue" and try again')
+    return
+  }
+  heardOffScreen = { alreadyHeard: result, at: Date.now(), wav }
+  CueNative.notify(
+    result ? `Cue heard: "${result.transcript}"` : 'Cue heard your command',
+    'Tap to review and approve it',
+  )
+}
+
+/** The command heard off screen, once, if still fresh. */
+export function takeHeardOffScreen() {
+  const heard = heardOffScreen
+  heardOffScreen = null
+  return heard && Date.now() - heard.at < HEARD_LIFETIME_MS ? heard : null
+}
 
 /** Hands the mic back to the wake-word service, unless the user turned it off. */
 export function resumeWakeWord() {

@@ -4,13 +4,13 @@ import { Tabs } from 'expo-router/js-tabs'
 import { useStore } from '@nanostores/react'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { useEffect } from 'react'
-import { View } from 'react-native'
+import { AppState, View } from 'react-native'
 import { CueConnect } from '@/features/cue/cue-connect'
 import { CueOnboarding } from '@/features/cue/cue-onboarding'
 import { $onboarded } from '@/features/cue/data-access/onboarding'
 import { CueFlow } from '@/features/cue/cue-flow'
 import { CueTabBar } from '@/features/cue/cue-tab-bar'
-import { flow } from '@/features/cue/data-access/cue-store'
+import { flow, takeHeardOffScreen, understandOffScreen } from '@/features/cue/data-access/cue-store'
 import { startWakeWord } from '@/features/cue/util/start-wake-word'
 import { AppProviders } from '@/features/core/data-access/app-providers'
 import { useTheme } from '@/features/shell/data-access/use-theme'
@@ -30,9 +30,22 @@ export default function Layout() {
       CueNative.consumePendingWake() // handled live, so a later start must not listen again
       void flow.startLiveListening('wake')
     })
-    // Opened by "Hey Cue" from the background or a locked screen: the event fired before this listener existed.
-    if (CueNative.consumePendingWake()) void flow.startLiveListening('wake')
-    return () => subscription.remove()
+    // "Hey Cue" while the app was off screen: the event fired before anyone listened, so opening the app (from the
+    // notification) picks up the command that was heard, or starts listening if none was.
+    const backgroundCommand = CueNative.addListener('onBackgroundCommand', ({ wav }) => void understandOffScreen(wav))
+    const takeClip = () => {
+      const heard = takeHeardOffScreen()
+      const wav = heard?.wav ?? CueNative.consumePendingClip()
+      if (wav) void flow.startFromClip(wav, heard?.alreadyHeard ?? undefined)
+      else if (CueNative.consumePendingWake()) void flow.startLiveListening('wake')
+    }
+    takeClip()
+    const appState = AppState.addEventListener('change', (state) => state === 'active' && takeClip())
+    return () => {
+      subscription.remove()
+      backgroundCommand.remove()
+      appState.remove()
+    }
   }, [onboarded])
 
   return (

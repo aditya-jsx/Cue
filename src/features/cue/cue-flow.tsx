@@ -239,7 +239,7 @@ function Listening({ covered }: { covered: boolean }) {
       <Backdrop />
       <Animated.View pointerEvents={covered ? 'none' : 'auto'} style={[StyleSheet.absoluteFill, fade]}>
         <View style={{ left: 0, position: 'absolute', right: 0, top: at(118) }}>
-          <Phase thinking={thinking} />
+          <Phase thinking={thinking || (engine === 'none' && !micBlocked)} />
         </View>
         <View style={{ alignItems: 'center', left: 0, position: 'absolute', right: 0, top: at(190) }}>
           <View style={{ alignItems: 'center', height: 200, justifyContent: 'center', width: 200 }}>

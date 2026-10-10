@@ -6,6 +6,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.app.ActivityManager
 import android.app.Service
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -18,12 +19,14 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.content.ContextCompat
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 
 /**
  * Foreground microphone service running the "Hey Cue" wake-word detector continuously.
- * A detection only fires after CONSECUTIVE_FRAMES_REQUIRED consecutive above-threshold frames
- * (~240ms sustained), then enters a cooldown — both are cheap mitigations for the model's
+ * A detection only fires after HITS_REQUIRED above-threshold frames within the last 6 frames
+ * (~480ms), then enters a cooldown — both are cheap mitigations for the model's
  * measured false-positive rate (see WakeWordDetector / the Voice folder training notes) that
  * don't require a better model, just don't trust a single noisy frame.
  */
@@ -87,7 +90,7 @@ class CueWakeWordService : Service() {
 
     record.startRecording()
     val chunk = ShortArray(WakeWordDetector.CHUNK_SAMPLES)
-    var consecutiveHits = 0
+    var recentHits = 0 // one bit per recent frame, newest lowest
     var cooldownFramesLeft = 0
 
     while (running) {
@@ -106,26 +109,87 @@ class CueWakeWordService : Service() {
         continue
       }
 
-      if (score >= DETECTION_THRESHOLD) {
-        consecutiveHits++
-      } else {
-        consecutiveHits = 0
-      }
-
-      if (consecutiveHits >= CONSECUTIVE_FRAMES_REQUIRED) {
-        consecutiveHits = 0
+      // Not strictly consecutive: from across a room the score flickers (high, low, high, high), which a
+      // consecutive-run rule kept resetting even though the model clearly heard "Hey Cue".
+      recentHits = ((recentHits shl 1) or (if (score >= DETECTION_THRESHOLD) 1 else 0)) and WINDOW_MASK
+      if (System.currentTimeMillis() < CueWakeWordBus.quietUntil) recentHits = 0 // Cue itself is talking
+      if (Integer.bitCount(recentHits) >= HITS_REQUIRED) {
+        recentHits = 0
         cooldownFramesLeft = COOLDOWN_FRAMES
         Log.i("CueWakeWord", "Detected \"Hey Cue\" (score=$score)")
-        CueWakeWordBus.pendingWakeAt = System.currentTimeMillis() // so an app opened by this wake knows to listen
         playChime()
-        bringToForeground()
-        CueWakeWordBus.onDetected?.invoke(score)
+        if (appIsOnScreen()) {
+          CueWakeWordBus.pendingWakeAt = System.currentTimeMillis()
+          bringToForeground()
+          CueWakeWordBus.onDetected?.invoke(score)
+        } else {
+          captureCommandInBackground(record)
+          cooldownFramesLeft = COOLDOWN_FRAMES
+        }
       }
     }
 
     record.stop()
     record.release()
     detector?.close()
+  }
+
+  /** True while Cue's own screen is showing; a foreground service alone ranks lower than that. */
+  private fun appIsOnScreen(): Boolean {
+    val info = ActivityManager.RunningAppProcessInfo()
+    ActivityManager.getMyMemoryState(info)
+    return info.importance <= ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
+  }
+
+  /**
+   * Cue isn't on screen, and Android won't let it open itself from here. So this service listens for the command itself
+   * (the wake-word recording is paused meanwhile, one mic client at a time) and hands the clip over in a notification.
+   * Nothing is understood or done here: tapping the notification opens Cue, which runs the usual confirmation.
+   */
+  private fun captureCommandInBackground(record: AudioRecord) {
+    record.stop()
+    Thread.sleep(CHIME_MS) // otherwise the chime itself is what gets recorded
+    val done = CountDownLatch(1)
+    var clip: String? = null
+    AudioCapture.start { event, payload ->
+      if (event == "onAudioCaptured") clip = payload["wav"] as? String
+      done.countDown()
+    }
+    if (!done.await(CAPTURE_WAIT_SECONDS, TimeUnit.SECONDS)) AudioCapture.stop()
+    record.startRecording()
+
+    // The app is alive in the background: it asks the assistant what was said and notifies with that.
+    val toApp = CueWakeWordBus.onClip
+    if (clip != null && toApp != null) return toApp(clip!!)
+
+    CueWakeWordBus.pendingClip = clip
+    CueWakeWordBus.pendingClipAt = System.currentTimeMillis()
+    val alert = if (clip == null) {
+      // Nothing was said after the chime: just say so, the next "Hey Cue" tries again.
+      Notification.Builder(this, ALERT_CHANNEL)
+        .setContentTitle("Cue didn't hear a command")
+        .setContentText("Say \"Hey Cue\" and try again")
+        .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+        .setAutoCancel(true)
+        .setTimeoutAfter(10_000)
+        .build()
+    } else {
+      val open = packageManager.getLaunchIntentForPackage(packageName)?.apply {
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+      } ?: return
+      val pendingIntent = PendingIntent.getActivity(this, 0, open, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+      Notification.Builder(this, ALERT_CHANNEL)
+        .setContentTitle("Cue heard your command")
+        .setContentText("Tap to review and approve it")
+        .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+        .setPriority(Notification.PRIORITY_HIGH)
+        .setFullScreenIntent(pendingIntent, true)
+        .setContentIntent(pendingIntent)
+        .setAutoCancel(true)
+        .setTimeoutAfter(CueWakeWordBus.CLIP_LIFETIME_MS)
+        .build()
+    }
+    getSystemService(NotificationManager::class.java).notify(ALERT_NOTIFICATION_ID, alert)
   }
 
   private fun playChime() {
@@ -184,8 +248,11 @@ class CueWakeWordService : Service() {
     private const val NOTIFICATION_ID = 1002
     private const val ALERT_NOTIFICATION_ID = 1003
     private const val SAMPLE_RATE = 16000
-    private const val DETECTION_THRESHOLD = 0.5f
-    private const val CONSECUTIVE_FRAMES_REQUIRED = 3 // ~240ms sustained, cuts single-frame noise spikes
+    private const val DETECTION_THRESHOLD = 0.7f // real attempts from across a room scored 0.68+, a false trigger leaned on a 0.56
+    private const val HITS_REQUIRED = 3 // cuts single-frame noise spikes
+    private const val WINDOW_MASK = 0b111111 // the last 6 frames, ~480ms
+    private const val CHIME_MS = 1500L
+    private const val CAPTURE_WAIT_SECONDS = 12L
     private const val COOLDOWN_FRAMES = 25 // ~2s @ 80ms/frame, avoid re-firing on the same utterance
   }
 }
@@ -193,10 +260,19 @@ class CueWakeWordService : Service() {
 /** In-process bridge from the service (no JS runtime access) to the module (which owns sendEvent). */
 object CueWakeWordBus {
   var onDetected: ((score: Float) -> Unit)? = null
+  var onClip: ((wav: String) -> Unit)? = null
+
+  /** Detection is ignored until then: Cue's own voice ("Hi, I'm Cue") can sound like "Hey Cue". */
+  @Volatile var quietUntil: Long = 0L
 
   /**
    * When the last wake happened. With the app closed, nothing in JS is listening yet when the service detects "Hey Cue",
    * so the event is lost; the app reads this as it starts and begins listening if the wake was just now.
    */
   @Volatile var pendingWakeAt: Long = 0L
+
+  /** A command heard while Cue was off screen (base64 WAV), waiting for the app to be opened and take it. */
+  @Volatile var pendingClip: String? = null
+  @Volatile var pendingClipAt: Long = 0L
+  const val CLIP_LIFETIME_MS = 120_000L
 }
