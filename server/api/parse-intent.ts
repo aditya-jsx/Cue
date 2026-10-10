@@ -23,7 +23,7 @@ Anything else is "unsupported", with a short, friendly reason written to the use
 
 Every command starts with a verb: "send", "buy", or "alert"/"notify"/"pause". A buy command begins "buy ..." even when the first sound is faint, and "buy five dollars" blends together easily, so it is very easy to mishear as "$55": amounts are small (Cue caps a rule at $50), so "buy five dollars" is $5, "buy ten dollars" is $10, and a heard amount above $50 is almost always two numbers run together. Keep the verb in "transcript".
 
-For the recipient: if the spoken name plausibly matches one of the user's contacts, return that contact's exact name. Return a wallet address unchanged. Otherwise return the name as heard.
+For the recipient: a Seeker name ends in ".skr" (spoken "alice dot S K R" or "alice dot skr"); return it as "alice.skr", lowercase, and never swap it for a contact, even one that sounds alike. Otherwise, if the spoken name plausibly matches one of the user's contacts, return that contact's exact name. Return a wallet address unchanged. Otherwise return the name as heard.
 Never invent an amount, token or price the user didn't say. If you can tell which action they want but a value is missing or unintelligible, still set intent to that action, fill in what you did understand, leave the rest null, and put a short question for the missing part in reason.
 Set every field that doesn't apply to null.`
 
