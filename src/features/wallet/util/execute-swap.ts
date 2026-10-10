@@ -180,25 +180,35 @@ export async function returnSessionFunds({
 }): Promise<void> {
   const sessionKey = await getSessionKey()
   if (!sessionKey) return
+  const exists = (account: Address) =>
+    client.rpc
+      .getAccountInfo(account, { commitment: 'confirmed', encoding: 'base64' })
+      .send()
+      .then((r) => r.value !== null)
+  // Its token accounts are closed too (each holds ~0.002 SOL of rent): the bought tokens' once delivered (empty), and
+  // the wrapped SOL one, which returns any unswapped WSOL as SOL.
+  const instructions: Instruction[] = []
   for (const token of Object.values(BUYABLE_TOKENS)) {
-    if (token) await deliverToOwner({ client, mint: token.mint, ownerAddress })
+    if (!token) continue
+    await deliverToOwner({ client, mint: token.mint, ownerAddress })
+    const ata = await findAtaAddress(sessionKey.address, token.mint)
+    if (await exists(ata)) {
+      instructions.push(
+        getCloseAccountInstruction({ destination: ownerAddress, owner: sessionKey.address, source: ata }),
+      )
+    }
   }
   const sessionWsolAta = await findAtaAddress(sessionKey.address, NATIVE_MINT_ADDRESS)
-  const exists = await client.rpc
-    .getAccountInfo(sessionWsolAta, { commitment: 'confirmed', encoding: 'base64' })
-    .send()
-    .then((r) => r.value !== null)
+  if (await exists(sessionWsolAta)) {
+    instructions.push(
+      getCloseAccountInstruction({ destination: ownerAddress, owner: sessionKey.address, source: sessionWsolAta }),
+    )
+  }
   // The SOL it was given for gas goes back too, less the fee of this one transaction, so it ends with nothing.
   const lamports = await client.rpc
     .getBalance(sessionKey.address, { commitment: 'confirmed' })
     .send()
     .then((r) => r.value)
-  const instructions: Instruction[] = []
-  if (exists) {
-    instructions.push(
-      getCloseAccountInstruction({ destination: ownerAddress, owner: sessionKey.address, source: sessionWsolAta }),
-    )
-  }
   if (lamports > ONE_SIGNATURE_FEE) {
     instructions.push(
       getTransferSolInstruction({
