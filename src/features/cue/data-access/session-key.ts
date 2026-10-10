@@ -7,10 +7,13 @@ import {
 import * as SecureStore from 'expo-secure-store'
 import { createMMKV } from 'react-native-mmkv'
 
+import { wipeStore } from '@/features/cue/util/wipe-store'
+
 const SESSION_KEY_STORAGE_KEY = 'session_private_key_b64'
 
 // Legacy plain-MMKV location (pre-Keystore). Read once to migrate an existing key, then never written to again.
-const legacyStorage = createMMKV({ id: 'cue-session' })
+const LEGACY_STORE_ID = 'cue-session' // where earlier builds kept the key, unencrypted
+const legacyStorage = createMMKV({ id: LEGACY_STORE_ID })
 
 /**
  * Session key at rest, protected by Android Keystore: expo-secure-store encrypts the value with an AES key that
@@ -27,7 +30,7 @@ export async function getSessionKey(): Promise<KeyPairSigner | null> {
     const legacy = legacyStorage.getString(SESSION_KEY_STORAGE_KEY)
     if (legacy) {
       await SecureStore.setItemAsync(SESSION_KEY_STORAGE_KEY, legacy)
-      legacyStorage.remove(SESSION_KEY_STORAGE_KEY)
+      wipeStore(LEGACY_STORE_ID) // remove() alone leaves the key's bytes in the file
       b64 = legacy
     }
   }
@@ -69,5 +72,5 @@ export async function getOrCreateSessionKey(): Promise<KeyPairSigner> {
  */
 export async function clearSessionKey(): Promise<void> {
   await SecureStore.deleteItemAsync(SESSION_KEY_STORAGE_KEY)
-  legacyStorage.remove(SESSION_KEY_STORAGE_KEY)
+  wipeStore(LEGACY_STORE_ID) // also clears bytes an earlier migration's remove() left behind
 }

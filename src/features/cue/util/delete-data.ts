@@ -1,10 +1,9 @@
-import { createMMKV } from 'react-native-mmkv'
-
 import { APP_STORAGE_ID } from '@/features/cluster/data-access/create-cluster-props'
 import { $cue } from '@/features/cue/data-access/cue-store'
 import { $onboarded } from '@/features/cue/data-access/onboarding'
 import { clearSessionKey } from '@/features/cue/data-access/session-key'
-import { $spoken } from '@/features/cue/util/speech'
+import { $spoken, $voice } from '@/features/cue/util/speech'
+import { wipeStore } from '@/features/cue/util/wipe-store'
 import { $delegatedLamports, $triggers } from '@/features/price-triggers/data-access/trigger-store'
 import CueNative from '../../../../modules/cue-native'
 
@@ -17,11 +16,12 @@ export async function deleteAllCueData(): Promise<void> {
   CueNative.stopWakeWordService()
   CueNative.stopHeartbeatService() // also stops it coming back after a reboot
   await clearSessionKey()
-  createMMKV({ id: APP_STORAGE_ID }).clearAll()
+  wipeStore(APP_STORAGE_ID)
   // The stores loaded their values at startup, so reset them too or the old data would reappear until a restart.
   $cue.set({ contacts: [], log: [], wake: true })
   $triggers.set([])
   $delegatedLamports.set(null)
   $spoken.set(true)
+  $voice.set('female')
   $onboarded.set(false)
 }
