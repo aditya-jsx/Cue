@@ -8,9 +8,12 @@ import { createMmkvCache } from '@/features/cluster/data-access/mmkv-cache'
 import { evaluateTriggers } from '@/features/price-triggers/util/evaluate-triggers'
 import { fetchPrices } from '@/features/prices/util/fetch-prices'
 import { maxPriceAgeMs } from '@/features/prices/util/price-freshness'
+import { type PollStats, recordPoll } from '@/features/prices/util/poll-stats'
 import CueNative from '../../../../modules/cue-native'
 
 const POLL_INTERVAL_MS = 30_000
+export const POLL_STATS_KEY = 'cue:poll-stats'
+const statsStorage = createMMKV({ id: APP_STORAGE_ID })
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 // Headless tasks run outside the React tree (no useAppCluster()), so read the persisted active cluster straight
@@ -42,6 +45,16 @@ AppRegistry.registerHeadlessTask('CueHeartbeat', () => async () => {
       await evaluateTriggers(client, maxPriceAgeMs(cluster.id), cluster.id)
     } catch (error) {
       console.warn('[CuePriceEngine] Poll failed:', error)
+    }
+    // Kept on the phone (the log buffer only holds minutes), so a screen-off soak can be read hours later.
+    try {
+      const prev = statsStorage.getString(POLL_STATS_KEY)
+      statsStorage.set(
+        POLL_STATS_KEY,
+        JSON.stringify(recordPoll(prev ? (JSON.parse(prev) as PollStats) : null, Date.now())),
+      )
+    } catch {
+      // statistics only; never let them stop the engine
     }
     CueNative.heartbeat(`poll ${i} ${new Date().toISOString()}`)
     await sleep(POLL_INTERVAL_MS)

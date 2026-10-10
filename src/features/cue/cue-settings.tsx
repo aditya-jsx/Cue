@@ -25,6 +25,10 @@ import {
   stopBuyTriggers,
 } from '@/features/price-triggers/data-access/trigger-store'
 import { SPRING, useCue } from '@/features/cue/cue-theme'
+import { POLL_STATS_KEY } from '@/features/prices/data-access/price-engine-task'
+import { describePollStats, type PollStats } from '@/features/prices/util/poll-stats'
+import { createMMKV } from 'react-native-mmkv'
+import { APP_STORAGE_ID } from '@/features/cluster/data-access/create-cluster-props'
 import { askBackgroundAccess, isBackgroundAllowed } from '@/features/cue/util/background-access'
 import { resetOnboarding } from '@/features/cue/data-access/onboarding'
 import { deleteAllCueData } from '@/features/cue/util/delete-data'
@@ -122,6 +126,20 @@ function BackgroundRow() {
         right={<Txt v="sub">{allowed ? 'On' : 'Allow'}</Txt>}
         title="Run in background"
       />
+    </Pressable>
+  )
+}
+
+/** Dev builds: what the background price service has done, for checking a screen-off soak. Tap to refresh. */
+function PollStatsRow() {
+  const read = () => {
+    const raw = createMMKV({ id: APP_STORAGE_ID }).getString(POLL_STATS_KEY)
+    return describePollStats(raw ? (JSON.parse(raw) as PollStats) : null, Date.now())
+  }
+  const [text, setText] = useState(read)
+  return (
+    <Pressable accessibilityRole="button" onPress={() => setText(read())}>
+      <Row detail={text} title="Background polls" />
     </Pressable>
   )
 }
@@ -301,6 +319,7 @@ export function CueSettings() {
               <>
                 <LinkRow href="/settings/cluster" label="Network" />
                 <LinkRow href="/tools" label="Developer tools" />
+                <PollStatsRow />
                 <Pressable accessibilityRole="button" onPress={resetOnboarding}>
                   <Row title="Show introduction again" />
                 </Pressable>
