@@ -35,23 +35,37 @@ export function setVoice(voice: CueVoice) {
 // Cue's own voice can sound like "Hey Cue" to the wake word, so detection pauses while it talks. Only the latest
 // utterance ends the pause: stopping one to start the next reports the old one as stopped after the new one began.
 let utterance = 0
-function say(text: string): Promise<void> {
+// The phone's installed voices, once Android's speech engine has answered. Asking for a voice before it's ready (e.g.
+// right after the app restarts in the background) makes expo-speech throw instead of speaking, so until then the
+// default voice is used.
+let installedVoices: Set<string> | null = null
+async function chosenVoice(): Promise<string | undefined> {
+  if (!installedVoices) {
+    const voices = await Speech.getAvailableVoicesAsync().catch(() => [])
+    if (voices.length) installedVoices = new Set(voices.map((v) => v.identifier))
+  }
+  const id = VOICES[$voice.get()]
+  return installedVoices?.has(id) ? id : undefined
+}
+
+async function say(text: string): Promise<void> {
   void Speech.stop()
   const id = ++utterance
   CueNative.setSpeaking(true)
+  const voice = await chosenVoice()
   return new Promise((resolve) => {
     const done = () => {
       if (id === utterance) CueNative.setSpeaking(false)
       resolve()
     }
-    // If the voice isn't on this phone, Android falls back to its default voice for the language.
+    if (id !== utterance) return done() // a newer line started while the voice was looked up
     Speech.speak(text, {
       language: 'en-US',
       onDone: done,
       onError: done,
       onStopped: done,
       rate: 1.1, // a touch quicker than Android's default, so replies don't drag
-      voice: VOICES[$voice.get()],
+      voice,
     })
   })
 }

@@ -4,12 +4,12 @@ import { type Address, getBase64Encoder, getTransactionDecoder } from '@solana/k
 
 import type { SolanaClient } from '@/features/cluster/data-access/create-solana-client'
 import { fetchQuote, fetchSwap } from '@/features/wallet/util/jupiter'
+import { withWholeLamportPriority } from '@/features/wallet/util/whole-lamport-priority'
 import { sendAndConfirm } from '@/features/wallet/util/send-signed-transaction'
 import { findAtaAddress } from '@/features/wallet/util/spl-token'
 import { CUE_FEE_BPS, CUE_TREASURY } from '@/features/wallet/util/tokens'
 
 const SLIPPAGE_BPS = 50
-
 /**
  * Where Cue's 0.5% goes for a swap: the treasury's account for the token bought, else for the token sold (Jupiter takes
  * either), else nowhere. A swap never fails because the treasury has no account for these tokens yet.
@@ -72,7 +72,9 @@ export async function executeWalletSwap({
     }
     lastValidBlockHeight = BigInt(swap.lastValidBlockHeight)
     outAmount = BigInt(quote.outAmount)
-    const unsigned = getTransactionDecoder().decode(getBase64Encoder().encode(swap.swapTransaction))
+    const unsigned = withWholeLamportPriority(
+      getTransactionDecoder().decode(getBase64Encoder().encode(swap.swapTransaction)),
+    )
     const [tx] = await wallet.signTransactions({ transactions: [unsigned] })
     return tx
   })
