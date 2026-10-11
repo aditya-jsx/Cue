@@ -1,3 +1,4 @@
+import { Redirect } from 'expo-router'
 import { Stack } from 'expo-router/stack'
 
 import { useTheme } from '@/features/shell/data-access/use-theme'
@@ -5,6 +6,8 @@ import { ShellUiHeaderTitle } from '@/features/shell/ui/shell-ui-page-header'
 
 export default function ToolsLayout() {
   const { foregroundColor, navigationHeaderOptions, tintColor } = useTheme()
+  // Developer tools exist only in development builds; a release build sends any link here back Home.
+  if (!__DEV__) return <Redirect href="/" />
 
   return (
     <Stack

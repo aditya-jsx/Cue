@@ -23,6 +23,7 @@
     "name": "Cue",
     "orientation": "portrait",
     "plugins": [
+      "./plugins/with-release-signing",
       [
         "expo-dev-client",
         {
