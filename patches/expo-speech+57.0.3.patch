@@ -1,0 +1,38 @@
+diff --git a/node_modules/expo-speech/android/src/main/java/expo/modules/speech/SpeechModule.kt b/node_modules/expo-speech/android/src/main/java/expo/modules/speech/SpeechModule.kt
+index ed8d2a7..c6384f7 100644
+--- a/node_modules/expo-speech/android/src/main/java/expo/modules/speech/SpeechModule.kt
++++ b/node_modules/expo-speech/android/src/main/java/expo/modules/speech/SpeechModule.kt
+@@ -38,7 +38,12 @@ class SpeechModule : Module() {
+     }
+ 
+     OnActivityDestroys {
+-      textToSpeech.shutdown()
++      // The process (and this module) can outlive the activity, so drop the shut-down engine and reconnect on next use.
++      synchronized(this@SpeechModule) {
++        _textToSpeech?.shutdown()
++        _textToSpeech = null
++        ttsState = TtsState.PENDING
++      }
+     }
+ 
+     AsyncFunction<Boolean>("isSpeaking") {
+@@ -145,7 +150,9 @@ class SpeechModule : Module() {
+ 
+   // TextToSpeech object related code
+ 
+-  private val textToSpeech: TextToSpeech by lazy {
++  private val textToSpeech: TextToSpeech get() = synchronized(this) { _textToSpeech ?: createTextToSpeech() }
++
++  private fun createTextToSpeech(): TextToSpeech {
+     val newTtsInstance = TextToSpeech(appContext.reactContext) { status: Int ->
+       if (status == TextToSpeech.SUCCESS) {
+         // synchronize because in some cases this runs on another thread and _textToSpeech is null
+@@ -194,7 +201,7 @@ class SpeechModule : Module() {
+       }
+     }
+     _textToSpeech = newTtsInstance
+-    newTtsInstance
++    return newTtsInstance
+   }
+ 
+   // Helpers

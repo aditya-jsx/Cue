@@ -14,7 +14,8 @@
     "lint:check": "expo lint",
     "start": "expo start",
     "web": "expo start --web",
-    "build:android:release": "cd android && ./gradlew :app:assembleRelease -PreactNativeArchitectures=arm64-v8a"
+    "build:android:release": "cd android && ./gradlew :app:assembleRelease -PreactNativeArchitectures=arm64-v8a",
+    "postinstall": "patch-package"
   },
   "displayName": "Cue",
   "description": "Cue: a voice-first AI wallet agent for Solana Mobile.",
@@ -77,6 +78,7 @@
     "@types/react": "~19.2.14",
     "eslint": "^9.25.0",
     "eslint-config-expo": "~57.0.0",
+    "patch-package": "^8.0.1",
     "prettier": "^3.9.6",
     "typescript": "~6.0.3"
   },
