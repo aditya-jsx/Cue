@@ -88,6 +88,8 @@ export async function confirmSignature({
   throw new Error(
     lastValidBlockHeight === undefined
       ? "Couldn't confirm the transaction on-chain yet. Check your balance before trying again."
-      : "Couldn't confirm the transaction on-chain. It may have expired, so check your balance before trying again.",
+      : // Past its last valid block and never seen: it can't land any more. Most often the wallet took too long to
+        // approve (Phantom's own devnet connection gets rate-limited).
+        'It expired before it reached the network (the wallet took too long to approve), so nothing was sent. Try again.',
   )
 }
