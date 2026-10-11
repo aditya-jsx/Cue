@@ -1,22 +1,65 @@
 diff --git a/node_modules/expo-speech/android/src/main/java/expo/modules/speech/SpeechModule.kt b/node_modules/expo-speech/android/src/main/java/expo/modules/speech/SpeechModule.kt
-index ed8d2a7..c6384f7 100644
+index ed8d2a7..153db9e 100644
 --- a/node_modules/expo-speech/android/src/main/java/expo/modules/speech/SpeechModule.kt
 +++ b/node_modules/expo-speech/android/src/main/java/expo/modules/speech/SpeechModule.kt
-@@ -38,7 +38,12 @@ class SpeechModule : Module() {
+@@ -38,7 +38,8 @@ class SpeechModule : Module() {
      }
  
      OnActivityDestroys {
 -      textToSpeech.shutdown()
 +      // The process (and this module) can outlive the activity, so drop the shut-down engine and reconnect on next use.
-+      synchronized(this@SpeechModule) {
-+        _textToSpeech?.shutdown()
-+        _textToSpeech = null
-+        ttsState = TtsState.PENDING
-+      }
++      disconnect()
      }
  
      AsyncFunction<Boolean>("isSpeaking") {
-@@ -145,7 +150,9 @@ class SpeechModule : Module() {
+@@ -104,7 +105,14 @@ class SpeechModule : Module() {
+     }
+   }
+ 
+-  private fun speakOut(id: String, text: String, options: SpeechOptions) {
++  /** Drops the engine connection; the next use opens a fresh one. */
++  private fun disconnect() = synchronized(this) {
++    _textToSpeech?.shutdown()
++    _textToSpeech = null
++    ttsState = TtsState.PENDING
++  }
++
++  private fun speakOut(id: String, text: String, options: SpeechOptions, retried: Boolean = false) {
+     options.pitch?.let(textToSpeech::setPitch)
+     options.rate?.let(textToSpeech::setSpeechRate)
+ 
+@@ -123,8 +131,8 @@ class SpeechModule : Module() {
+     } ?: Locale.getDefault()
+ 
+     options.voice?.let { voiceName ->
+-      textToSpeech.voices
+-        .firstOrNull { it.name == voiceName }
++      textToSpeech.voices // null while the engine isn't connected; the speak below then reconnects
++        ?.firstOrNull { it.name == voiceName }
+         ?.let(textToSpeech::setVoice)
+     }
+ 
+@@ -135,17 +143,28 @@ class SpeechModule : Module() {
+       }
+     }
+ 
+-    textToSpeech.speak(
++    val result = textToSpeech.speak(
+       text,
+       TextToSpeech.QUEUE_ADD,
+       params,
+       id
+     )
++    if (result == TextToSpeech.SUCCESS) return
++    // Android can stop the speech engine (e.g. to free memory) and this connection then fails silently: reconnect and
++    // try once more, else report the error so the caller isn't left waiting for an utterance that never plays.
++    if (retried) return sendEvent(speakingErrorEvent, idToMap(id))
++    synchronized(this) {
++      disconnect()
++      delayedUtterances.add(Utterance(id, text, options, retried = true))
++      textToSpeech
++    }
+   }
  
    // TextToSpeech object related code
  
@@ -27,7 +70,30 @@ index ed8d2a7..c6384f7 100644
      val newTtsInstance = TextToSpeech(appContext.reactContext) { status: Int ->
        if (status == TextToSpeech.SUCCESS) {
          // synchronize because in some cases this runs on another thread and _textToSpeech is null
-@@ -194,7 +201,7 @@ class SpeechModule : Module() {
+@@ -178,10 +197,13 @@ class SpeechModule : Module() {
+               sendEvent(speakingErrorEvent, idToMap(utteranceId))
+             }
+           })
+-          for ((id, text, options) in delayedUtterances) {
+-            speakOut(id, text, options)
++          // Drained, not just read: a reconnect replays the queue, and nothing may be said twice.
++          while (true) {
++            val (id, text, options, retried) = delayedUtterances.poll() ?: break
++            speakOut(id, text, options, retried)
+           }
+-          for (promise in delayedGetVoices) {
++          while (true) {
++            val promise = delayedGetVoices.poll() ?: break
+             promise.resolve(getVoices())
+           }
+         }
+@@ -190,11 +212,13 @@ class SpeechModule : Module() {
+           ttsState = TtsState.FAILED
+           delayedGetVoices.forEach { it.resolve(emptyList<VoiceRecord>()) }
+           delayedUtterances.forEach { sendEvent(speakingErrorEvent, idToMap(it.id)) }
++          delayedGetVoices.clear()
++          delayedUtterances.clear()
+         }
        }
      }
      _textToSpeech = newTtsInstance
@@ -36,3 +102,13 @@ index ed8d2a7..c6384f7 100644
    }
  
    // Helpers
+@@ -205,7 +229,8 @@ class SpeechModule : Module() {
+   private data class Utterance(
+     val id: String,
+     val text: String,
+-    val options: SpeechOptions
++    val options: SpeechOptions,
++    val retried: Boolean = false
+   )
+ 
+   private enum class TtsState {

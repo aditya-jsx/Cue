@@ -66,9 +66,18 @@ class CueNativeModule : Module() {
       ctx.startActivity(intent)
     }
 
+    // A command heard off screen goes to the app only while JS is listening for it; otherwise the service keeps it and
+    // notifies, so it's never handed to nobody (e.g. after the app's screen was swiped away).
+    OnStartObserving("onBackgroundCommand") {
+      CueWakeWordBus.onClip = { wav -> sendEvent("onBackgroundCommand", mapOf("wav" to wav)) }
+    }
+
+    OnStopObserving("onBackgroundCommand") {
+      CueWakeWordBus.onClip = null
+    }
+
     Function("startWakeWordService") {
       CueWakeWordBus.onDetected = { score -> sendEvent("onWakeWordDetected", mapOf("score" to score)) }
-      CueWakeWordBus.onClip = { wav -> sendEvent("onBackgroundCommand", mapOf("wav" to wav)) }
       val ctx = appContext.reactContext ?: throw Exceptions.ReactContextLost()
       ctx.startForegroundService(Intent(ctx, CueWakeWordService::class.java))
     }
@@ -112,7 +121,6 @@ class CueNativeModule : Module() {
 
     Function("stopWakeWordService") {
       CueWakeWordBus.onDetected = null
-      CueWakeWordBus.onClip = null
       val ctx = appContext.reactContext ?: throw Exceptions.ReactContextLost()
       ctx.stopService(Intent(ctx, CueWakeWordService::class.java))
     }

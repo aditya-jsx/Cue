@@ -274,7 +274,7 @@ class CueWakeWordService : Service() {
     private const val DETECTION_THRESHOLD = 0.7f // real attempts from across a room scored 0.68+, a false trigger leaned on a 0.56
     private const val HITS_REQUIRED = 3 // cuts single-frame noise spikes
     private const val WINDOW_MASK = 0b111111 // the last 6 frames, ~480ms
-    private const val CHIME_MS = 1500L
+    private const val CHIME_MS = 700L // cue_chime.mp3 is 0.6 s; kept short so a command said right away isn't spoken over it
     const val REPLY_WINDOW_MS = 3_500 // long enough to say "approve" after the chime, without guessing when they stopped
     private const val CAPTURE_WAIT_SECONDS = 12L
     private const val COOLDOWN_FRAMES = 25 // ~2s @ 80ms/frame, avoid re-firing on the same utterance

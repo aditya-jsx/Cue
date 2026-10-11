@@ -41,7 +41,11 @@ let utterance = 0
 let installedVoices: Set<string> | null = null
 async function chosenVoice(): Promise<string | undefined> {
   if (!installedVoices) {
-    const voices = await Speech.getAvailableVoicesAsync().catch(() => [])
+    // Bounded: an engine that never answers mustn't hold up what Cue has to say.
+    const voices = await Promise.race([
+      Speech.getAvailableVoicesAsync().catch(() => []),
+      new Promise<[]>((r) => setTimeout(() => r([]), 2000)),
+    ])
     if (voices.length) installedVoices = new Set(voices.map((v) => v.identifier))
   }
   const id = VOICES[$voice.get()]
@@ -54,7 +58,11 @@ async function say(text: string): Promise<void> {
   CueNative.setSpeaking(true)
   const voice = await chosenVoice()
   return new Promise((resolve) => {
+    // Also on a timer: if the engine never reports back, whatever waits on this line (e.g. listening for "approve")
+    // still goes ahead instead of hanging. Generous: about twice the time the line takes to say.
+    const fallback = setTimeout(() => done(), 3000 + text.length * 120)
     const done = () => {
+      clearTimeout(fallback)
       if (id === utterance) CueNative.setSpeaking(false)
       resolve()
     }

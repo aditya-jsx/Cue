@@ -28,11 +28,14 @@ import {
   understandAudio,
   understandReply,
 } from '@/features/cue/data-access/understand'
+import { answerQuestion } from '@/features/cue/util/answer'
 import {
+  $triggers,
   createTrigger,
   formatUsd,
   type GuardAction,
   delegatedLamports,
+  onCluster,
   setDelegatedLamports,
   spendDelegation,
   type TriggerDirection,
@@ -361,6 +364,39 @@ export const $homeNotice = atom<{ canEdit: boolean; reason: string; text: string
 /** A question for Home to answer out loud (it has the wallet and network the answer needs); no sheet opens. */
 export const $question = atom<{ question: 'balance' | 'price' | 'rules'; symbol?: Symbol; text: string } | null>(null)
 
+const WALLET_KEY = 'cue:wallet'
+
+/** The connected wallet, kept so Cue can answer for it off screen, where the wallet connection isn't loaded. */
+export function rememberWallet(owner: string) {
+  if (storage.getString(WALLET_KEY) !== owner) storage.set(WALLET_KEY, owner)
+}
+// ponytail: kept after a disconnect too (Delete my data clears it); clear it on disconnect if that ever matters.
+const rememberedWallet = () => voiceAllowance()?.owner ?? storage.getString(WALLET_KEY) ?? null
+
+/** Says the answer to a question and returns it as text, for the Home banner or a notification. */
+export async function answerAloud(
+  q: { question: 'balance' | 'price' | 'rules'; symbol?: Symbol },
+  owner: string,
+): Promise<string> {
+  const clusterId = activeCluster().id
+  try {
+    const answer = await answerQuestion({
+      client: activeSolanaClient(),
+      owner,
+      prices: $prices.get(),
+      question: q.question,
+      rules: $triggers.get().filter((t) => t.status === 'active' && onCluster(t, clusterId)),
+      symbol: q.symbol,
+    })
+    speak(answer.spoken)
+    return answer.text
+  } catch {
+    const sorry = "I couldn't check that right now. Try again in a moment."
+    speak(sorry)
+    return sorry
+  }
+}
+
 function route(text: string, plan: Plan, draft: Draft | null) {
   $flow.set({ ...$flow.get(), draft, plan, signature: null, text })
   // The manual form keeps its sheet, so what was typed isn't thrown away.
@@ -658,10 +694,17 @@ export async function understandOffScreen(wav: string) {
     speak(plan.reason)
     return
   }
-  // Voice approvals, phone unlocked: the whole exchange happens by voice, wherever the user is.
-  // (Off screen the allowance says whose wallet to act for, so this needs one even for a guard or an alert.)
-  if (result && plan && canApproveByVoice(plan) && voiceAllowance() && !CueNative.isDeviceLocked()) {
-    await approveByVoice(plan, voiceAllowance()!.owner, activeSolanaClient(), 'notify')
+  const wallet = rememberedWallet()
+  // A question is answered out loud (and in a notification) without opening the app.
+  if (result && plan?.kind === 'answer' && wallet) {
+    CueNative.notify(result.transcript, await answerAloud(plan, wallet))
+    return
+  }
+  // Voice approvals, phone unlocked: the whole exchange happens by voice, wherever the user is. Money moves only from
+  // the allowance's wallet; a guard or an alert moves none, so the connected wallet does.
+  const owner = plan?.kind === 'send' || plan?.kind === 'buy' ? voiceAllowance()?.owner : wallet
+  if (result && plan && owner && canApproveByVoice(plan) && !CueNative.isDeviceLocked()) {
+    await approveByVoice(plan, owner, activeSolanaClient(), 'notify')
     return
   }
   heardOffScreen = { alreadyHeard: result, at: Date.now(), wav }
@@ -670,6 +713,10 @@ export async function understandOffScreen(wav: string) {
     'Tap to review and approve it',
   )
 }
+
+// Registered once for the app's whole process, not by a screen: the screen goes away when the app is swiped from recents
+// while the process (and "Hey Cue") lives on. The native side only hands commands over while this is listening.
+CueNative.addListener('onBackgroundCommand', ({ wav }) => void understandOffScreen(wav).catch((e) => console.warn(e)))
 
 /** The command heard off screen, once, if still fresh. */
 export function takeHeardOffScreen() {

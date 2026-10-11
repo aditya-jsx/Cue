@@ -81,6 +81,7 @@ object AudioCapture {
         var heardSomething = false
         val overChime = ArrayDeque<ShortArray>()
         var heldEarly = false
+        var startedAtChimeEnd = false
         var speechPeak = 0.0
         var elapsedMs = 0
 
@@ -109,9 +110,10 @@ object AudioCapture {
 
           // The first 200 ms measure the room, so the speech threshold adapts to a quiet room or a noisy one. The
           // quietest frame, not the average: the user may already be talking.
+          // Capped from the first frame: the user often talks straight through it.
           if (calibrationFrames < 10) {
-            noiseFloor = if (calibrationFrames == 0) rms else minOf(noiseFloor, rms)
-            if (++calibrationFrames == 10) noiseFloor = minOf(noiseFloor, MAX_NOISE_FLOOR)
+            noiseFloor = minOf(if (calibrationFrames == 0) rms else minOf(noiseFloor, rms), MAX_NOISE_FLOOR)
+            calibrationFrames++
           }
           val threshold = maxOf(noiseFloor * 3.0, MIN_SPEECH_RMS)
           // Quiet is judged against the speaker's own level as well as the room: a fifth of how loud they speak, so a
@@ -146,7 +148,8 @@ object AudioCapture {
               speaking = true
               Log.d("CueAudioCapture", "speech start at ${elapsedMs}ms rms=${rms.toInt()} threshold=${threshold.toInt()}")
               // Talking began right as the chime ended: the start of the sentence was said over it.
-              if (recordedMs <= OVER_CHIME_GRACE_MS) overChime.forEach { clip.write(toBytes(it)) }
+              startedAtChimeEnd = recordedMs <= OVER_CHIME_GRACE_MS && overChime.isNotEmpty()
+              if (startedAtChimeEnd) overChime.forEach { clip.write(toBytes(it)) }
               overChime.clear()
               preRoll.forEach { clip.write(toBytes(it)) }
               preRoll.clear()
@@ -172,7 +175,8 @@ object AudioCapture {
               heldEarly = true
               emit("onAudioPause", mapOf("wav" to Base64.encodeToString(toWav(clip.toByteArray()), Base64.NO_WRAP)))
             }
-            if (silentMs >= END_SILENCE_MS && voicedMs < MIN_VOICED_MS && elapsedMs < NO_SPEECH_MS) {
+            // Not when it began as the chime ended: that's the tail of a command said over the chime, the rest is in front.
+            if (silentMs >= END_SILENCE_MS && voicedMs < MIN_VOICED_MS && elapsedMs < NO_SPEECH_MS && !startedAtChimeEnd) {
               // A blip (the chime's echo, a tap), not speech: forget it and keep waiting for the user to talk.
               Log.d("CueAudioCapture", "ignored a ${voicedMs}ms blip at ${elapsedMs}ms")
               speaking = false

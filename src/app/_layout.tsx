@@ -11,7 +11,7 @@ import { $onboarded } from '@/features/cue/data-access/onboarding'
 import { CueFlow } from '@/features/cue/cue-flow'
 import { CueIntro } from '@/features/cue/cue-intro'
 import { CueTabBar } from '@/features/cue/cue-tab-bar'
-import { flow, takeHeardOffScreen, understandOffScreen } from '@/features/cue/data-access/cue-store'
+import { flow, rememberWallet, takeHeardOffScreen } from '@/features/cue/data-access/cue-store'
 import { startWakeWord } from '@/features/cue/util/start-wake-word'
 import { AppProviders } from '@/features/core/data-access/app-providers'
 import { useTheme } from '@/features/shell/data-access/use-theme'
@@ -31,9 +31,8 @@ export default function Layout() {
       CueNative.consumePendingWake() // handled live, so a later start must not listen again
       void flow.startLiveListening('wake')
     })
-    // "Hey Cue" while the app was off screen: the event fired before anyone listened, so opening the app (from the
-    // notification) picks up the command that was heard, or starts listening if none was.
-    const backgroundCommand = CueNative.addListener('onBackgroundCommand', ({ wav }) => void understandOffScreen(wav))
+    // "Hey Cue" while the app was off screen (cue-store hears it): opening the app (from the notification) picks up the
+    // command that was heard, or starts listening if none was.
     const takeClip = () => {
       const heard = takeHeardOffScreen()
       const wav = heard?.wav ?? CueNative.consumePendingClip()
@@ -44,7 +43,6 @@ export default function Layout() {
     const appState = AppState.addEventListener('change', (state) => state === 'active' && takeClip())
     return () => {
       subscription.remove()
-      backgroundCommand.remove()
       appState.remove()
     }
   }, [onboarded])
@@ -63,6 +61,9 @@ function AppTabs() {
   const { account } = useMobileWallet()
   const { backgroundColor } = useTheme()
   const onboarded = useStore($onboarded)
+  useEffect(() => {
+    if (account) rememberWallet(account.address.toString())
+  }, [account])
 
   if (!onboarded) {
     return <CueOnboarding />
