@@ -70,6 +70,18 @@ function VoiceApprovalRows() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  if (allowance && (allowance.cluster ?? 'solana:devnet') !== cluster.id) {
+    // Revoking has to happen on the network it was granted on.
+    const where = (allowance.cluster ?? 'solana:devnet') === 'solana:mainnet' ? 'Mainnet' : 'Devnet'
+    return (
+      <Row
+        detail={`Switch to ${where} in Network to use or revoke them`}
+        last
+        title={`Voice approvals on (${where})`}
+      />
+    )
+  }
+
   if (allowance) {
     return (
       <Row
@@ -101,7 +113,7 @@ function VoiceApprovalRows() {
         wrapAmountLamports: lamports,
       })
       setDelegatedLamports(approve)
-      setVoiceAllowance({ owner: account.address })
+      setVoiceAllowance({ cluster: cluster.id, owner: account.address })
       pushLogEntry({
         amount: `${sol} SOL`,
         detail: 'Say "approve" instead of signing, up to this much',
@@ -371,6 +383,7 @@ export function CueSettings() {
   const { contacts, wake } = useStore($cue)
   const delegated = useStore($delegatedLamports)
   const voiceAllowance = useStore($voiceAllowance)
+  const { cluster } = useAppCluster()
   const spoken = useStore($spoken)
   const voice = useStore($voice)
   const buyRules = useStore($triggers).filter((t) => t.kind === 'buy' && t.status === 'active').length
@@ -394,7 +407,8 @@ export function CueSettings() {
             <VoiceApprovalRows />
           </Rows>
           <Rows>
-            {voiceAllowance ? null : delegated !== null ? (
+            {voiceAllowance && (voiceAllowance.cluster ?? 'solana:devnet') === cluster.id ? null : delegated !==
+              null ? (
               <Animated.View exiting={FadeOutLeft.duration(260)} layout={LinearTransition}>
                 <Row
                   detail={`${buyRules} active buy rule${buyRules === 1 ? '' : 's'} · until you revoke`}
