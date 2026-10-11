@@ -3,7 +3,7 @@ import { createMMKV } from 'react-native-mmkv'
 
 import { activeCluster } from '@/features/cluster/data-access/active-client'
 import { APP_STORAGE_ID } from '@/features/cluster/data-access/create-cluster-props'
-import { $delegatedLamports, activeBuyLamports } from '@/features/price-triggers/data-access/trigger-store'
+import { activeBuyLamports, delegatedLamports } from '@/features/price-triggers/data-access/trigger-store'
 
 /**
  * Voice approvals: the user sets aside an allowance once (one wallet signature: wrap SOL, approve Cue's session key
@@ -37,7 +37,7 @@ export function setVoiceAllowance(value: { cluster: string; owner: string } | nu
 
 /** What voice approvals can still spend: the approved allowance, minus what waiting buy rules have set aside. */
 export function allowanceLeft(): bigint {
-  const approved = $delegatedLamports.get()
+  const approved = delegatedLamports()
   if (!voiceApprovalsOn() || approved === null) return 0n
   const left = approved - activeBuyLamports()
   return left > 0n ? left : 0n
@@ -46,6 +46,6 @@ export function allowanceLeft(): bigint {
 /** On, and on the network the app is using now (allowances from before networks were recorded count as devnet). */
 export function voiceApprovalsOn(): boolean {
   const allowance = $voiceAllowance.get()
-  if (!allowance || $delegatedLamports.get() === null) return false
+  if (!allowance || delegatedLamports() === null) return false
   return (allowance.cluster ?? 'solana:devnet') === activeCluster().id
 }

@@ -59,6 +59,7 @@ import {
 } from '@/features/cue/data-access/cue-store'
 import {
   $triggers,
+  onCluster,
   activeBuyLamports,
   formatUsd,
   type GuardAction,
@@ -71,6 +72,7 @@ import CueNative from '../../../modules/cue-native'
 import { executeDelegationGrant } from '@/features/wallet/util/execute-delegation'
 import { executeInstantSend } from '@/features/wallet/util/execute-instant-send'
 import { voiceApprovalsOn } from '@/features/cue/data-access/voice-allowance'
+import { activeCluster } from '@/features/cluster/data-access/active-client'
 import { CUE_FEE_BPS, CUE_TREASURY } from '@/features/wallet/util/tokens'
 import { answerQuestion } from '@/features/cue/util/answer'
 import { speak, speakAndWait } from '@/features/cue/util/speech'
@@ -686,7 +688,7 @@ function Answer({ question, symbol }: { question: 'balance' | 'price' | 'rules';
   const [answer, setAnswer] = useState<string | null>(null)
   useEffect(() => {
     let live = true
-    const rules = $triggers.get().filter((t) => t.status === 'active')
+    const rules = $triggers.get().filter((t) => t.status === 'active' && onCluster(t, activeCluster().id))
     answerQuestion({ client, owner: account!.address, prices: $prices.get(), question, rules, symbol })
       .then((a) => {
         if (!live) return

@@ -9,7 +9,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useAppCluster } from '@/features/cluster/data-access/cluster-provider'
 import { $homeNotice, flow, SUGGESTIONS } from '@/features/cue/data-access/cue-store'
 import { mainnetRpc, skrNamesOf } from '@/features/cue/data-access/skr'
-import { $triggers, cancelTrigger, describeTrigger } from '@/features/price-triggers/data-access/trigger-store'
+import {
+  $triggers,
+  cancelTrigger,
+  describeTrigger,
+  onCluster,
+} from '@/features/price-triggers/data-access/trigger-store'
 import { useCue } from '@/features/cue/cue-theme'
 import { CuePage, Glass, Press, Ring, Row, Rows, SectionLabel, Txt } from '@/features/cue/ui/cue-ui'
 import { useGetBalance } from '@/features/wallet/data-access/use-get-balance'
@@ -40,7 +45,7 @@ export function CueHome() {
   const insets = useSafeAreaInsets()
   const { account } = useMobileWallet()
   const { cluster } = useAppCluster()
-  const rules = useStore($triggers).filter((t) => t.status === 'active')
+  const rules = useStore($triggers).filter((t) => t.status === 'active' && onCluster(t, cluster.id))
   const notice = useStore($homeNotice)
   const balance = useGetBalance(account!.address)
   const value = balance.data?.value

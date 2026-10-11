@@ -159,14 +159,19 @@ export async function executeSwapBuy({
       ])
     }
   }
+  // Build the swap before any money moves: if Jupiter is down, nothing has happened and the rule just keeps waiting.
+  let swap: Awaited<ReturnType<typeof fetchSwap>>
+  try {
+    const quote = await checkedQuote() // a fresh look right before swapping
+    swap = await fetchSwap({ feeAccount: feeAccount ?? undefined, quote, userPublicKey: sessionKey.address })
+  } catch (error) {
+    throw new SwapNotStartedError(error instanceof Error ? error.message : String(error), { cause: error })
+  }
+  // (Jupiter's own test run fails here as expected: the session key's wrapped SOL only arrives in step 1.)
+
   await executeAutonomousAction({ client, ownerAddress, transferLamports: amountLamports }) // step 1
 
   try {
-    const quote = await checkedQuote() // a fresh look right before swapping
-    const swap = await fetchSwap({ feeAccount: feeAccount ?? undefined, quote, userPublicKey: sessionKey.address })
-    if (swap.simulationError)
-      throw new Error(`Jupiter's test run of the swap failed: ${JSON.stringify(swap.simulationError)}`)
-
     const unsigned = getTransactionDecoder().decode(getBase64Encoder().encode(swap.swapTransaction))
     const signed = await partiallySignTransaction([sessionKey.keyPair], unsigned) // the session key is its only signer
     const swapSignature = await sendAndConfirm({

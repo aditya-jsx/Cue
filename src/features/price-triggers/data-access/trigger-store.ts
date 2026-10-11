@@ -1,6 +1,7 @@
 import { atom } from 'nanostores'
 import { createMMKV } from 'react-native-mmkv'
 
+import { activeCluster } from '@/features/cluster/data-access/active-client'
 import { APP_STORAGE_ID } from '@/features/cluster/data-access/create-cluster-props'
 import type { Symbol } from '@/features/prices/data-access/price-store'
 
@@ -14,6 +15,7 @@ export type TriggerStatus = 'active' | 'cancelled' | 'expired' | 'failed' | 'fir
 export type GuardAction = 'alert_only' | 'pause_activity'
 
 interface TriggerBase {
+  cluster?: string // the network it was made on; absent on rules from before networks were recorded (devnet)
   createdAt: number
   error?: string
   firedAt?: number
@@ -70,10 +72,28 @@ function load(): PriceTrigger[] {
 // Headless task and foreground UI share this JS runtime (see price-store.ts), so this single atom, loaded once
 // from MMKV at import time, stays in sync across both without extra plumbing.
 export const $triggers = atom<PriceTrigger[]>(load())
-// Total WSOL the session key is currently approved to spend, or null when nothing is delegated.
-export const $delegatedLamports = atom<bigint | null>(
-  storage.getString(DELEGATION_KEY) ? BigInt(storage.getString(DELEGATION_KEY)!) : null,
-)
+/** Rules belong to one network: a devnet rule must never be checked (or spend) on mainnet. */
+export const onCluster = (t: { cluster?: string }, clusterId: string) => (t.cluster ?? 'solana:devnet') === clusterId
+
+// WSOL the session key is approved to spend, per network (lamports as strings). An approval on devnet says nothing
+// about mainnet. A bare number from before networks were recorded is devnet's.
+function loadDelegations(): Record<string, string> {
+  const raw = storage.getString(DELEGATION_KEY)
+  if (!raw) return {}
+  if (/^\d+$/.test(raw)) return { 'solana:devnet': raw }
+  try {
+    return JSON.parse(raw) as Record<string, string>
+  } catch {
+    return {}
+  }
+}
+export const $delegations = atom<Record<string, string>>(loadDelegations())
+
+/** What the session key may still spend on `clusterId` (default: the network in use), or null when nothing is. */
+export function delegatedLamports(clusterId: string = activeCluster().id): bigint | null {
+  const value = $delegations.get()[clusterId]
+  return value === undefined ? null : BigInt(value)
+}
 
 function persist(triggers: PriceTrigger[]) {
   storage.set(KEY, JSON.stringify(triggers))
@@ -87,6 +107,7 @@ function update(id: string, patch: Partial<TriggerBase>) {
 export function createTrigger(input: NewTrigger & { ownerAddress: string }): PriceTrigger {
   const trigger = {
     ...input,
+    cluster: activeCluster().id,
     createdAt: Date.now(),
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     status: 'active',
@@ -111,11 +132,11 @@ export function rebaselineGuard(id: string, baselineUsd: number) {
 }
 
 /** Cancels every active buy rule (a guard's pause action, or a revoked delegation). Returns how many stopped. */
-export function stopBuyTriggers(reason: string): number {
+export function stopBuyTriggers(reason: string, clusterId: string = activeCluster().id): number {
   let stopped = 0
   persist(
     $triggers.get().map((t) => {
-      if (t.kind !== 'buy' || t.status !== 'active') return t
+      if (t.kind !== 'buy' || t.status !== 'active' || !onCluster(t, clusterId)) return t
       stopped++
       return { ...t, error: reason, status: 'cancelled' }
     }),
@@ -123,23 +144,25 @@ export function stopBuyTriggers(reason: string): number {
   return stopped
 }
 
-export function activeBuyLamports(): bigint {
+export function activeBuyLamports(clusterId: string = activeCluster().id): bigint {
   return $triggers
     .get()
-    .filter((t): t is BuyTrigger => t.kind === 'buy' && t.status === 'active')
+    .filter((t): t is BuyTrigger => t.kind === 'buy' && t.status === 'active' && onCluster(t, clusterId))
     .reduce((sum, t) => sum + BigInt(t.amountLamports), 0n)
 }
 
-export function setDelegatedLamports(lamports: bigint | null) {
-  if (lamports === null) storage.remove(DELEGATION_KEY)
-  else storage.set(DELEGATION_KEY, lamports.toString())
-  $delegatedLamports.set(lamports)
+export function setDelegatedLamports(lamports: bigint | null, clusterId: string = activeCluster().id) {
+  const next = { ...$delegations.get() }
+  if (lamports === null) delete next[clusterId]
+  else next[clusterId] = lamports.toString()
+  storage.set(DELEGATION_KEY, JSON.stringify(next))
+  $delegations.set(next)
 }
 
 /** A buy spent `lamports` of the on-chain allowance, so less is left to spend. */
-export function spendDelegation(lamports: bigint) {
-  const left = $delegatedLamports.get()
-  if (left !== null) setDelegatedLamports(left > lamports ? left - lamports : 0n)
+export function spendDelegation(lamports: bigint, clusterId: string = activeCluster().id) {
+  const left = delegatedLamports(clusterId)
+  if (left !== null) setDelegatedLamports(left > lamports ? left - lamports : 0n, clusterId)
 }
 
 export const formatUsd = (n: number) => `$${n >= 1 ? n.toFixed(2) : n.toFixed(4).replace(/0{1,2}$/, '')}`

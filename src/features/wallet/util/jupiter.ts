@@ -18,16 +18,33 @@ export interface JupiterSwap {
   swapTransaction: string // base64, a ready-to-sign version-0 transaction with its address-lookup tables
 }
 
-async function request<T>(url: string, init?: RequestInit): Promise<T> {
+async function attempt<T>(url: string, init?: RequestInit): Promise<{ retry: boolean; value?: T; error?: Error }> {
   const abort = new AbortController()
   const timer = setTimeout(() => abort.abort(), TIMEOUT_MS)
   try {
     const response = await fetch(url, { ...init, signal: abort.signal })
-    if (!response.ok) throw new Error(`Jupiter answered ${response.status}: ${(await response.text()).slice(0, 160)}`)
-    return (await response.json()) as T
+    if (response.ok) return { retry: false, value: (await response.json()) as T }
+    // Busy or briefly down (it answers 503 with an HTML page): worth another go. Anything else won't change.
+    const busy = response.status === 429 || response.status >= 500
+    const detail = busy ? 'is busy or briefly down' : `refused it: ${(await response.text()).slice(0, 120)}`
+    return { error: new Error(`Jupiter ${detail} (${response.status}).`), retry: busy }
+  } catch (error) {
+    return { error: error instanceof Error ? error : new Error(String(error)), retry: true }
   } finally {
     clearTimeout(timer)
   }
+}
+
+async function request<T>(url: string, init?: RequestInit): Promise<T> {
+  let last: Error | undefined
+  for (const waitMs of [0, 1000, 2500]) {
+    if (waitMs) await new Promise((resolve) => setTimeout(resolve, waitMs))
+    const result = await attempt<T>(url, init)
+    if (result.value !== undefined) return result.value
+    last = result.error
+    if (!result.retry) break
+  }
+  throw last ?? new Error('Jupiter did not answer.')
 }
 
 export function fetchQuote(p: {

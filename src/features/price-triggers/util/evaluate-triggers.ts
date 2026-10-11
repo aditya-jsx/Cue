@@ -16,6 +16,7 @@ import {
   markTriggerFired,
   rebaselineGuard,
   spendDelegation,
+  onCluster,
   stopBuyTriggers,
 } from '@/features/price-triggers/data-access/trigger-store'
 import { $prices, type PricePoint, type Symbol } from '@/features/prices/data-access/price-store'
@@ -53,7 +54,8 @@ function isFresh(symbol: Symbol, point: PricePoint, maxAgeMs: number): boolean {
 /** Checks every active rule against the latest prices; buys spend via the session key, guards alert or pause. */
 export async function evaluateTriggers(client: SolanaClient, maxPriceAgeMs: number, clusterId: string): Promise<void> {
   const prices = $prices.get()
-  for (const trigger of $triggers.get().filter((t) => t.status === 'active')) {
+  // Only this network's rules: a devnet rule must never be checked, or spend, on mainnet.
+  for (const trigger of $triggers.get().filter((t) => t.status === 'active' && onCluster(t, clusterId))) {
     if (trigger.kind === 'buy') await evaluateBuy(client, trigger, prices, maxPriceAgeMs, clusterId)
     else if (trigger.kind === 'alert') evaluateAlert(trigger, prices[trigger.symbol], maxPriceAgeMs)
     else evaluateGuard(trigger, prices.SOL, maxPriceAgeMs)
@@ -107,7 +109,7 @@ async function evaluateBuy(
     }
     waitingBuys.delete(trigger.id)
     markTriggerFired(trigger.id, signature)
-    spendDelegation(lamports)
+    spendDelegation(lamports, clusterId)
     pushLogEntry({
       amount,
       detail: `${trigger.symbol} hit ${formatUsd(point.usd)}`,

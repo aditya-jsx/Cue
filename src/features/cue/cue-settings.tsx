@@ -19,7 +19,9 @@ import { useAppCluster } from '@/features/cluster/data-access/cluster-provider'
 import { identity } from '@/features/core/data-access/app-providers'
 import { $cue, actions, flow, pushLogEntry, removeContact, shortAddr } from '@/features/cue/data-access/cue-store'
 import {
-  $delegatedLamports,
+  $delegations,
+  delegatedLamports,
+  onCluster,
   $triggers,
   activeBuyLamports,
   setDelegatedLamports,
@@ -62,7 +64,7 @@ function VoiceApprovalRows() {
   const { client, cluster } = useAppCluster()
   const queryClient = useQueryClient()
   const allowance = useStore($voiceAllowance)
-  useStore($delegatedLamports) // re-render as the allowance is spent
+  useStore($delegations) // re-render as the allowance is spent
   useStore($triggers)
   const balance = useGetBalance(account!.address).data?.value
   const max = balance === undefined ? null : Math.max(0, Number(balance) / LAMPORTS - SETUP_RESERVE_SOL)
@@ -202,7 +204,8 @@ function RevokeButton() {
         queryClient.invalidateQueries({ queryKey: ['get-transaction-signatures'] }),
       ])
       setDelegatedLamports(null)
-      setVoiceAllowance(null)
+      // Only this network's voice allowance ended; one on another network is untouched.
+      if (($voiceAllowance.get()?.cluster ?? 'solana:devnet') === cluster.id) setVoiceAllowance(null)
       const stopped = stopBuyTriggers('Permission revoked')
       pushLogEntry({
         amount: '—',
@@ -381,12 +384,15 @@ export function CueSettings() {
   const insets = useSafeAreaInsets()
   const { activeTheme } = useTheme()
   const { contacts, wake } = useStore($cue)
-  const delegated = useStore($delegatedLamports)
+  useStore($delegations)
   const voiceAllowance = useStore($voiceAllowance)
   const { cluster } = useAppCluster()
+  const delegated = delegatedLamports(cluster.id)
   const spoken = useStore($spoken)
   const voice = useStore($voice)
-  const buyRules = useStore($triggers).filter((t) => t.kind === 'buy' && t.status === 'active').length
+  const buyRules = useStore($triggers).filter(
+    (t) => t.kind === 'buy' && t.status === 'active' && onCluster(t, cluster.id),
+  ).length
   const { disconnect } = useMobileWallet()
 
   return (

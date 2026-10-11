@@ -29,7 +29,7 @@ import {
   createTrigger,
   formatUsd,
   type GuardAction,
-  $delegatedLamports,
+  delegatedLamports,
   setDelegatedLamports,
   spendDelegation,
   type TriggerDirection,
@@ -720,7 +720,7 @@ export async function executeWithAllowance(plan: Plan, owner: string, client: So
     recordSend(signature, plan, 'Approved by voice')
     return signature
   }
-  if (plan.kind === 'buy') activateBuy(owner, '', $delegatedLamports.get() ?? 0n, plan, 'Approved by voice')
+  if (plan.kind === 'buy') activateBuy(owner, '', delegatedLamports() ?? 0n, plan, 'Approved by voice')
   if (plan.kind === 'guard') activateGuard(owner, plan)
   if (plan.kind === 'alert') activateAlert(owner, plan)
   return null
