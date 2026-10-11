@@ -15,11 +15,12 @@ The command arrives either as a short audio clip of the user speaking, or as tex
 
 Always write what the user said into "transcript", as plain text with numbers as digits and the token as "SOL". If the audio is silent or has no speech, set transcript to an empty string and intent to "unsupported" with reason "I didn't catch that.".
 
-Cue can do exactly five things:
+Cue can do exactly six things:
 - instant_send: send SOL right now. Fill amount (in SOL), token ("SOL") and recipient.
 - conditional_buy: buy a token when its price crosses a threshold. Fill amount_usd, token, condition ("below" or "above") and threshold_usd in dollars ("85 cents" is 0.85). Tokens are written by symbol: JUP (Jupiter), SKR (the Seeker token, said "S K R" or "Seeker"), SOL. "S K R" right after "of" or "buy" is the token; after a name and "dot" it is a Seeker name.
 - portfolio_guard: watch for a drop in the user's portfolio. Fill threshold_pct, timeframe ("1h", or "24h" for "today"/"a day"/unspecified) and action ("pause_activity" when they say pause, stop or freeze; otherwise "alert_only").
 - price_alert: tell the user when a token's price crosses a level, nothing bought ("tell me when SOL goes above 120", "alert me if JUP drops to 30 cents"). Fill token, threshold_usd, and condition when they said which way ("above"/"rises"/"over" or "below"/"drops"/"under"), else null. "Alert me if my portfolio drops" is portfolio_guard; an alert about one token's price is price_alert.
+- swap: exchange one token for another right now, approved by the user in their wallet ("swap 100 SKR to SOL", "sell 2 JUP" (to SOL), "convert 0.01 SOL to Seeker"). Fill amount (of the token they give), token (the one they give) and to_token (the one they get; SOL if unsaid). A swap that waits for a price is conditional_buy.
 - wallet_question: a question about their own wallet, answered out loud. question is "balance" (how much SOL or of a token they hold; fill token if they named one), "price" (what a token costs now; fill token), or "rules" (what rules or alerts they have set).
 Anything else is "unsupported", with a short, friendly reason written to the user.
 
@@ -55,7 +56,15 @@ const SCHEMA = {
     amount_usd: nullable({ type: 'number' }),
     condition: nullable({ enum: ['above', 'below'], type: 'string' }),
     intent: {
-      enum: ['instant_send', 'conditional_buy', 'portfolio_guard', 'price_alert', 'wallet_question', 'unsupported'],
+      enum: [
+        'instant_send',
+        'conditional_buy',
+        'portfolio_guard',
+        'price_alert',
+        'swap',
+        'wallet_question',
+        'unsupported',
+      ],
       type: 'string',
     },
     question: nullable({ enum: ['balance', 'price', 'rules'], type: 'string' }),
@@ -64,6 +73,7 @@ const SCHEMA = {
     threshold_pct: nullable({ type: 'number' }),
     threshold_usd: nullable({ type: 'number' }),
     timeframe: nullable({ enum: ['1h', '24h'], type: 'string' }),
+    to_token: nullable({ type: 'string' }),
     token: nullable({ type: 'string' }),
     transcript: { type: 'string' },
   },
@@ -79,6 +89,7 @@ const SCHEMA = {
     'threshold_pct',
     'threshold_usd',
     'timeframe',
+    'to_token',
     'token',
     'transcript',
   ],
@@ -103,6 +114,7 @@ const REQUIRED: Record<string, string[]> = {
   instant_send: ['amount', 'recipient'],
   portfolio_guard: ['threshold_pct'],
   price_alert: ['token', 'threshold_usd'],
+  swap: ['amount', 'token'],
   wallet_question: ['question'],
 }
 
@@ -128,6 +140,10 @@ function toCueIntent(raw: Raw) {
     return { ...fields, token: String(fields.token ?? 'SOL').toUpperCase(), transcript }
   if (raw.intent === 'conditional_buy' || raw.intent === 'price_alert')
     return { ...fields, token: String(fields.token).toUpperCase(), transcript }
+  if (raw.intent === 'swap') {
+    const to = fields.to_token ? String(fields.to_token).toUpperCase() : 'SOL'
+    return { ...fields, to_token: to, token: String(fields.token).toUpperCase(), transcript }
+  }
   if (raw.intent === 'wallet_question')
     return { ...fields, token: fields.token ? String(fields.token).toUpperCase() : undefined, transcript }
   return { action: 'alert_only', timeframe: '24h', ...fields, transcript }

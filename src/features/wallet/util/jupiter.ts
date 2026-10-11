@@ -66,7 +66,12 @@ export function fetchQuote(p: {
 }
 
 /** Builds the swap for `userPublicKey` to sign and send. It spends from the user's own token account (no wrapping). */
-export function fetchSwap(p: { feeAccount?: string; quote: JupiterQuote; userPublicKey: string }) {
+export function fetchSwap(p: {
+  feeAccount?: string
+  quote: JupiterQuote
+  userPublicKey: string
+  wrapAndUnwrapSol?: boolean
+}) {
   return request<JupiterSwap>(`${BASE}/swap`, {
     body: JSON.stringify({
       dynamicComputeUnitLimit: true,
@@ -74,7 +79,7 @@ export function fetchSwap(p: { feeAccount?: string; quote: JupiterQuote; userPub
       prioritizationFeeLamports: { priorityLevelWithMaxLamports: { maxLamports: 100_000, priorityLevel: 'high' } },
       quoteResponse: p.quote,
       userPublicKey: p.userPublicKey,
-      wrapAndUnwrapSol: false,
+      wrapAndUnwrapSol: p.wrapAndUnwrapSol ?? false, // the session key spends its own WSOL; a wallet swap uses plain SOL
     }),
     headers: { 'content-type': 'application/json' },
     method: 'POST',

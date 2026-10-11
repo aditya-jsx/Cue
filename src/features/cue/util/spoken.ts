@@ -7,7 +7,11 @@ export type SpokenPlan =
   | { action: 'alert_only' | 'pause_activity'; kind: 'guard'; thresholdPct: number; timeframe: '1h' | '24h' }
   | { direction: 'above' | 'below'; kind: 'alert'; symbol: string; targetUsd: number }
   | { kind: 'answer' }
+  | { amount: number; estimatedOut: number; from: string; kind: 'swap'; to: string }
   | { kind: 'nope'; reason: string }
+
+/** A token amount for the ear: at most 4 significant decimals ("about 1.6541 SOL"), no float noise. */
+const amountForEar = (n: number) => Number(n.toPrecision(n >= 1 ? 6 : 4)).toString()
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
 
@@ -41,6 +45,8 @@ export function spokenConfirm(plan: SpokenPlan, byVoice = false): string {
       return `Watch for a ${plan.thresholdPct} percent drop in ${frame(plan.timeframe)}, and ${reaction(plan.action)}. ${next}`
     case 'alert':
       return `Tell you when ${spokenToken(plan.symbol)} ${plan.direction === 'above' ? 'rises above' : 'falls below'} ${spokenPrice(plan.targetUsd)}. ${next}`
+    case 'swap':
+      return `Swap ${plan.amount} ${spokenToken(plan.from)} for about ${amountForEar(plan.estimatedOut)} ${spokenToken(plan.to)}. Tap continue to approve it in your wallet.`
     case 'answer':
       return '' // the answer screen says it once it has looked it up
     case 'nope':
@@ -59,6 +65,7 @@ export function spokenApproved(plan: SpokenPlan): string {
       return `You said approve. Turning on the guard.`
     case 'alert':
       return `You said approve. Setting the alert for ${spokenToken(plan.symbol)}.`
+    case 'swap': // signed in the wallet, never approved by voice
     case 'answer':
     case 'nope':
       return ''
@@ -76,6 +83,8 @@ export function spokenResult(plan: SpokenPlan): string {
       return `Guard is on. I'll ${reaction(plan.action)} if your portfolio drops ${plan.thresholdPct} percent in ${frame(plan.timeframe)}.`
     case 'alert':
       return `Alert is on. I'll tell you when ${spokenToken(plan.symbol)} ${plan.direction === 'above' ? 'rises above' : 'falls below'} ${spokenPrice(plan.targetUsd)}.`
+    case 'swap':
+      return `Swapped ${plan.amount} ${spokenToken(plan.from)} for ${spokenToken(plan.to)}.`
     case 'answer':
     case 'nope':
       return ''

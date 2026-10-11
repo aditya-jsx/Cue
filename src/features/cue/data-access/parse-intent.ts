@@ -16,6 +16,7 @@ export type Intent =
       threshold_pct: number
       timeframe: '1h' | '24h'
     }
+  | { amount: number; intent: 'swap'; token: string; to_token: string }
   | { condition?: 'above' | 'below'; intent: 'price_alert'; threshold_usd: number; token: string }
   | { intent: 'wallet_question'; question: 'balance' | 'price' | 'rules'; token?: string }
   | { intent: 'unsupported'; reason: string }
@@ -76,6 +77,14 @@ export function parseIntent(text: string): Intent {
     if (!(amount > 0)) return { intent: 'unsupported', reason: 'The amount must be more than zero.' }
     if (token !== 'SOL') return { intent: 'unsupported', reason: `I can only send SOL for now, not ${token}.` }
     return { amount, intent: 'instant_send', recipient: send[3].trim(), token }
+  }
+
+  // "swap 100 SKR to SOL", "convert 0.01 SOL to SKR", "sell 2 JUP" (to SOL unless said).
+  const swap = t.match(/^(?:swap|convert|trade|sell)\s+(\d*\.?\d+)\s+([a-z]+)(?:\s+(?:to|for|into)\s+([a-z]+))?\s*$/i)
+  if (swap) {
+    const amount = Number(swap[1])
+    if (!(amount > 0)) return { intent: 'unsupported', reason: 'The amount must be more than zero.' }
+    return { amount, intent: 'swap', to_token: (swap[3] ?? 'SOL').toUpperCase(), token: swap[2].toUpperCase() }
   }
 
   const buy = t.match(/^buy\s+\$?(\d*\.?\d+)\s+(?:of|worth of)\s+([a-z]+)\b.*?(?:(\d*\.?\d+)\s*cents?|\$(\d*\.?\d+))/i)

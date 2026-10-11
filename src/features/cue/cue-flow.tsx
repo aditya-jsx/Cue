@@ -42,6 +42,9 @@ import {
   activateBuy,
   $homeNotice,
   activateAlert,
+  decimalsOf,
+  mintOf,
+  pushLogEntry,
   canApproveByVoice,
   declinedBecause,
   executeWithAllowance,
@@ -69,6 +72,7 @@ import { $prices, type Symbol } from '@/features/prices/data-access/price-store'
 import CueNative from '../../../modules/cue-native'
 import { executeDelegationGrant } from '@/features/wallet/util/execute-delegation'
 import { executeInstantSend } from '@/features/wallet/util/execute-instant-send'
+import { executeWalletSwap } from '@/features/wallet/util/execute-wallet-swap'
 import { CUE_FEE_BPS, CUE_TREASURY } from '@/features/wallet/util/tokens'
 import { speak, speakAndWait } from '@/features/cue/util/speech'
 import { spokenApproved, spokenConfirm } from '@/features/cue/util/spoken'
@@ -488,6 +492,38 @@ function Confirm() {
     }
   }
 
+  const [swapping, setSwapping] = useState(false)
+  async function swapNow() {
+    if (plan.kind !== 'swap' || !account || swapping) return
+    setSwapping(true)
+    setError(null)
+    try {
+      const { outAmount, signature } = await executeWalletSwap({
+        account,
+        amount: BigInt(Math.round(plan.amount * 10 ** decimalsOf(plan.from))),
+        chain: cluster.id,
+        client,
+        identity,
+        inputMint: mintOf(plan.from),
+        outputMint: mintOf(plan.to),
+      })
+      const got = Number((Number(outAmount) / 10 ** decimalsOf(plan.to)).toPrecision(6))
+      pushLogEntry({
+        amount: `${got} ${plan.to}`,
+        detail: `Swapped ${plan.amount} ${plan.from}`,
+        signature,
+        status: 'Confirmed',
+        title: `Swap ${plan.from} → ${plan.to}`,
+      })
+      refreshWallet()
+      flow.signed(signature)
+    } catch (e) {
+      setError(formatError(e))
+    } finally {
+      setSwapping(false)
+    }
+  }
+
   function turnOnAlert() {
     if (!account) return
     activateAlert(account.address)
@@ -575,6 +611,26 @@ function Confirm() {
           </Animated.View>
         </>
       ) : null}
+      {plan.kind === 'swap' ? (
+        <>
+          <Animated.View entering={stagger(0)}>
+            <Tag>Swap</Tag>
+          </Animated.View>
+          <Animated.View entering={stagger(1)}>
+            <Txt style={{ fontSize: 40, fontWeight: '700', letterSpacing: -1.6, lineHeight: 44, marginTop: 8 }}>
+              {`${plan.amount} ${plan.from}`}
+            </Txt>
+          </Animated.View>
+          <Animated.View entering={stagger(3)} style={{ marginTop: 22 }}>
+            <Rows>
+              <KV label="You get about" value={num(`${Number(plan.estimatedOut.toPrecision(6))} ${plan.to}`)} />
+              {CUE_TREASURY ? <KV label="Cue fee" value={val(`${CUE_FEE_BPS / 100}% (if collectable)`)} /> : null}
+              <KV label="Max slippage" value={val('0.5%')} />
+              <KV label="Signature" last value={val('In your wallet')} />
+            </Rows>
+          </Animated.View>
+        </>
+      ) : null}
       {plan.kind === 'alert' ? (
         <>
           <Animated.View entering={stagger(0)}>
@@ -653,6 +709,14 @@ function Confirm() {
             {plan.kind === 'buy' ? <CueButton label="Continue" onPress={flow.review} /> : null}
             {plan.kind === 'guard' ? <CueButton label="Continue" onPress={turnOnGuard} /> : null}
             {plan.kind === 'alert' ? <CueButton label="Continue" onPress={turnOnAlert} /> : null}
+            {plan.kind === 'swap' ? (
+              <CueButton
+                label="Continue"
+                loading={swapping}
+                loadingLabel="Waiting for your wallet"
+                onPress={() => void swapNow()}
+              />
+            ) : null}
             {plan.kind === 'send' ? (
               <CueButton
                 label="Continue"
@@ -664,7 +728,7 @@ function Confirm() {
           </>
         )}
         <View style={{ flexDirection: 'row', gap: 12 }}>
-          {plan.kind === 'alert' ? null : (
+          {plan.kind === 'alert' || plan.kind === 'swap' ? null : (
             <View style={{ flex: 1 }}>
               <CueButton label="Edit details" onPress={flow.edit} variant="glass" />
             </View>
@@ -1087,7 +1151,9 @@ function Success() {
                 'Alert is on',
                 `Cue will tell you once when ${plan.symbol} ${plan.direction === 'above' ? 'rises above' : 'falls below'} ${formatUsd(plan.targetUsd)}. Nothing is bought.`,
               ]
-            : ['', '']
+            : plan.kind === 'swap'
+              ? ['Swapped', `${plan.amount} ${plan.from} to ${plan.to}. Confirmed on Solana.`]
+              : ['', '']
   return (
     <Animated.View
       entering={ZoomIn.duration(420).easing(ease)}

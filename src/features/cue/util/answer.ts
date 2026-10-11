@@ -10,6 +10,24 @@ const TOKEN_PROGRAM = address('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
 const SPOKEN_NAME: Record<string, string> = { JUP: 'Jupiter', SKR: 'Seeker', SOL: 'SOL' }
 const amount = (n: number) => Number(n.toFixed(n >= 1 ? 2 : 4)).toString()
 
+/** How much of each token Cue knows (JUP, SKR) the wallet holds on this network. */
+export async function tokenHoldings(client: SolanaClient, owner: string): Promise<Record<string, number>> {
+  // By token program, not by mint: a mint that doesn't exist on this cluster (JUP on devnet) would be an RPC error.
+  const { value } = await client.rpc
+    .getTokenAccountsByOwner(address(owner), { programId: TOKEN_PROGRAM }, { encoding: 'jsonParsed' })
+    .send()
+  type Parsed = { parsed: { info: { mint: string; tokenAmount: { uiAmount: number | null } } } }
+  const out: Record<string, number> = {}
+  for (const [symbol, token] of Object.entries(BUYABLE_TOKENS)) {
+    if (!token) continue
+    out[symbol] = value
+      .map((a) => (a.account.data as unknown as Parsed).parsed.info)
+      .filter((info) => info.mint === token.mint)
+      .reduce((sum, info) => sum + (info.tokenAmount.uiAmount ?? 0), 0)
+  }
+  return out
+}
+
 /** Answers a question about the user's own wallet: what to show, and the same thing written for the ear. */
 export async function answerQuestion({
   client,

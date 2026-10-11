@@ -1,7 +1,8 @@
 import Ionicons from '@expo/vector-icons/Ionicons'
 import { useStore } from '@nanostores/react'
 import { useQuery } from '@tanstack/react-query'
-import { useEffect } from 'react'
+import * as Clipboard from 'expo-clipboard'
+import { useEffect, useState } from 'react'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { router } from 'expo-router'
 import { Alert, RefreshControl, ScrollView, View } from 'react-native'
@@ -10,7 +11,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { useAppCluster } from '@/features/cluster/data-access/cluster-provider'
 import { $homeNotice, $question, flow, SUGGESTIONS } from '@/features/cue/data-access/cue-store'
-import { answerQuestion } from '@/features/cue/util/answer'
+import { answerQuestion, tokenHoldings } from '@/features/cue/util/answer'
 import { speak } from '@/features/cue/util/speech'
 import { $prices } from '@/features/prices/data-access/price-store'
 import { mainnetRpc, skrNamesOf } from '@/features/cue/data-access/skr'
@@ -79,9 +80,23 @@ export function CueHome() {
   const c = useCue()
   const insets = useSafeAreaInsets()
   const { account } = useMobileWallet()
-  const { cluster } = useAppCluster()
+  const { client, cluster } = useAppCluster()
   const rules = useStore($triggers).filter((t) => t.status === 'active' && onCluster(t, cluster.id))
   const notice = useStore($homeNotice)
+  const [copied, setCopied] = useState(false)
+  const prices = useStore($prices)
+  // Only the tokens Cue understands (it can price, watch and buy them); a wallet's spam airdrops stay in Phantom.
+  const { data: tokens, refetch: refetchTokens } = useQuery({
+    queryFn: () => tokenHoldings(client, account!.address),
+    queryKey: ['cue-tokens', cluster.id, account!.address.toString()],
+    staleTime: 30_000,
+  })
+  const held = Object.entries(tokens ?? {})
+    .filter(([, amount]) => amount > 0)
+    .map(([symbol, amount]) => {
+      const price = prices[symbol as keyof typeof prices]
+      return { amount, symbol, usd: price ? amount * price.usd : null }
+    })
   useStore($voiceAllowances) // re-render when voice approvals are turned on or off
   useStore($delegations) // ...or spent from
   useStore($triggers)
@@ -108,7 +123,7 @@ export function CueHome() {
           // Pull down to re-read the balance (and the .skr name) straight from the chain.
           <RefreshControl
             colors={[c.text]}
-            onRefresh={() => void Promise.all([balance.refetch(), refetchSkrName()])}
+            onRefresh={() => void Promise.all([balance.refetch(), refetchSkrName(), refetchTokens()])}
             progressBackgroundColor={c.bg}
             refreshing={balance.isRefetching}
             tintColor={c.text}
@@ -128,9 +143,21 @@ export function CueHome() {
           }}
         >
           <Txt style={{ fontSize: 22, fontWeight: '700', letterSpacing: -0.66 }}>Cue</Txt>
-          <Glass radius={999} style={{ paddingHorizontal: 13, paddingVertical: 7 }}>
-            <Txt v="mono">{`${skrName ? `${skrName} · ` : ''}${address.slice(0, 4)}…${address.slice(-4)}`}</Txt>
-          </Glass>
+          {/* Tap to copy the full address, e.g. to receive funds. */}
+          <Press
+            label="Copy wallet address"
+            onPress={() => {
+              void Clipboard.setStringAsync(address)
+              setCopied(true)
+              setTimeout(() => setCopied(false), 1500)
+            }}
+          >
+            <Glass radius={999} style={{ paddingHorizontal: 13, paddingVertical: 7 }}>
+              <Txt v="mono">
+                {copied ? 'Copied' : `${skrName ? `${skrName} · ` : ''}${address.slice(0, 4)}…${address.slice(-4)}`}
+              </Txt>
+            </Glass>
+          </Press>
         </Animated.View>
 
         {notice ? (
@@ -195,6 +222,22 @@ export function CueHome() {
             </View>
           </Glass>
         </Animated.View>
+
+        {held.length ? (
+          <Animated.View entering={enter(2)}>
+            <SectionLabel>Tokens</SectionLabel>
+            <Rows>
+              {held.map((t, i) => (
+                <Row
+                  key={t.symbol}
+                  last={i === held.length - 1}
+                  right={<Txt v="num">{t.usd !== null ? `$${t.usd.toFixed(2)}` : '—'}</Txt>}
+                  title={`${t.amount.toLocaleString(undefined, { maximumFractionDigits: 4 })} ${t.symbol}`}
+                />
+              ))}
+            </Rows>
+          </Animated.View>
+        ) : null}
 
         <Animated.View entering={enter(2)}>
           <SectionLabel>Active rules</SectionLabel>

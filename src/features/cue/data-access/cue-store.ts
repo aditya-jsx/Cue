@@ -7,6 +7,9 @@ import { APP_STORAGE_ID } from '@/features/cluster/data-access/create-cluster-pr
 import type { SolanaClient } from '@/features/cluster/data-access/create-solana-client'
 import { allowanceLeft, voiceAllowance, voiceApprovalsOn } from '@/features/cue/data-access/voice-allowance'
 import { executeAllowanceSend } from '@/features/wallet/util/execute-allowance-send'
+import { fetchQuote } from '@/features/wallet/util/jupiter'
+import { NATIVE_MINT_ADDRESS } from '@/features/wallet/util/spl-token'
+import { BUYABLE_TOKENS } from '@/features/wallet/util/tokens'
 import { ensureMicPermission } from '@/features/cue/util/mic-permission'
 import { speak, speakAndWait, stopSpeaking } from '@/features/cue/util/speech'
 import { spokenApproved, spokenConfirm, spokenResult } from '@/features/cue/util/spoken'
@@ -68,6 +71,7 @@ export type Plan =
   | { action: GuardAction; baselineUsd: number; kind: 'guard'; thresholdPct: number; timeframe: '1h' | '24h' }
   | { direction: TriggerDirection; kind: 'alert'; priceUsd: number; symbol: Symbol; targetUsd: number }
   | { kind: 'answer'; question: 'balance' | 'price' | 'rules'; symbol?: Symbol }
+  | { amount: number; estimatedOut: number; from: Symbol; kind: 'swap'; to: Symbol }
   | { kind: 'nope'; reason: string }
 
 // Tapping one plays it through the same listening → parse → validate path as speaking it.
@@ -239,6 +243,8 @@ export function prepareIntent(intent: Intent, skrRecipient?: { address: string; 
         targetUsd: intent.threshold_usd,
       }
     }
+    case 'swap':
+      return nope('Swaps need a live price first.') // planned in prepare(), which can fetch one
     case 'wallet_question': {
       const symbol = intent.token && WATCHABLE_TOKENS.includes(intent.token) ? (intent.token as Symbol) : undefined
       if (intent.token && !symbol) return nope(`I only know about ${WATCHABLE_TOKENS.join(', ')} for now.`)
@@ -303,7 +309,41 @@ const stillListening = (ticket: number) => {
  * prepareIntent, after looking up a Seeker name ("alice.skr") on mainnet, so the confirmation shows the wallet the money
  * would go to. An unregistered name or a failed lookup is said plainly, never guessed at.
  */
+const SWAPPABLE: Symbol[] = ['SOL', 'JUP', 'SKR']
+export const mintOf = (symbol: Symbol) => (symbol === 'SOL' ? NATIVE_MINT_ADDRESS : BUYABLE_TOKENS[symbol]!.mint)
+export const decimalsOf = (symbol: Symbol) => (symbol === 'SOL' ? 9 : BUYABLE_TOKENS[symbol]!.decimals)
+
+/** A swap right now (signed in the wallet): mainnet only, between tokens Cue knows, priced by a live Jupiter quote. */
+async function prepareSwap(intent: Extract<Intent, { intent: 'swap' }>): Promise<Plan> {
+  const from = intent.token as Symbol
+  const to = intent.to_token as Symbol
+  if (!SWAPPABLE.includes(from) || !SWAPPABLE.includes(to)) return nope('I can swap between SOL, JUP and SKR for now.')
+  if (from === to) return nope(`That's ${from} to ${from}: pick a different token to get.`)
+  if (!(intent.amount > 0)) return nope('The amount must be more than zero.')
+  if (activeCluster().id !== 'solana:mainnet') {
+    return nope('Swaps need Mainnet: Jupiter has no Devnet markets. Switch under Settings, Network.')
+  }
+  try {
+    const quote = await fetchQuote({
+      amount: BigInt(Math.round(intent.amount * 10 ** decimalsOf(from))),
+      inputMint: mintOf(from),
+      outputMint: mintOf(to),
+      slippageBps: 50,
+    })
+    return {
+      amount: intent.amount,
+      estimatedOut: Number(quote.outAmount) / 10 ** decimalsOf(to),
+      from,
+      kind: 'swap',
+      to,
+    }
+  } catch {
+    return nope(`I couldn't get a price for ${from} to ${to} right now. Try again in a moment.`)
+  }
+}
+
 async function prepare(intent: Intent): Promise<Plan> {
+  if (intent.intent === 'swap') return prepareSwap(intent)
   const label = intent.intent === 'instant_send' ? skrLabel(intent.recipient) : null
   if (!label) return prepareIntent(intent)
   const owner = await resolveSkr(mainnetRpc, label).catch(() => undefined)

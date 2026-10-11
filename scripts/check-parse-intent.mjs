@@ -121,4 +121,9 @@ assert.deepEqual(p('how much JUP do I have'), { intent: 'wallet_question', quest
 assert.deepEqual(p("what's the price of SOL"), { intent: 'wallet_question', question: 'price', token: 'SOL' })
 assert.deepEqual(p('what rules do I have'), { intent: 'wallet_question', question: 'rules' })
 
+// Swaps: "sell" means to SOL unless another token is named.
+assert.deepEqual(p('swap 100 SKR to SOL'), { amount: 100, intent: 'swap', to_token: 'SOL', token: 'SKR' })
+assert.deepEqual(p('sell 2 JUP'), { amount: 2, intent: 'swap', to_token: 'SOL', token: 'JUP' })
+assert.deepEqual(p('convert 0.01 SOL to seeker'), { amount: 0.01, intent: 'swap', to_token: 'SKR', token: 'SOL' })
+
 console.log('parse-intent: all checks passed')

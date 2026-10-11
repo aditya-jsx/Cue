@@ -89,6 +89,13 @@ export function toIntent(raw: unknown): Intent | null {
       const condition = o.condition === 'above' || o.condition === 'below' ? o.condition : undefined
       return { condition, intent: 'price_alert', threshold_usd, token }
     }
+    case 'swap': {
+      const amount = num(o.amount)
+      const token = str(o.token)?.toUpperCase()
+      return amount && token
+        ? { amount, intent: 'swap', to_token: str(o.to_token)?.toUpperCase() ?? 'SOL', token }
+        : null
+    }
     case 'wallet_question':
       return o.question === 'balance' || o.question === 'price' || o.question === 'rules'
         ? { intent: 'wallet_question', question: o.question, token: str(o.token)?.toUpperCase() }
