@@ -2,7 +2,7 @@ import Ionicons from '@expo/vector-icons/Ionicons'
 import { useStore } from '@nanostores/react'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { Link } from 'expo-router'
-import { Alert, AppState, Pressable, ScrollView, TextInput, View } from 'react-native'
+import { Alert, AppState, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native'
 import Animated, {
   FadeInDown,
   FadeOutLeft,
@@ -62,7 +62,7 @@ const solAmount = (lamports: bigint) => Number((Number(lamports) / LAMPORTS).toF
 const SETUP_RESERVE_SOL = 0.013
 
 /** Voice approvals: set an allowance once (one wallet signature), then say "approve" instead of signing. */
-function VoiceApprovalRows() {
+function VoiceApprovalRows({ last }: { last: boolean }) {
   const c = useCue()
   const { account } = useMobileWallet()
   const { client, cluster } = useAppCluster()
@@ -82,7 +82,7 @@ function VoiceApprovalRows() {
     return (
       <Row
         detail={`Switch to ${where} in Network to use or revoke them`}
-        last
+        last={last}
         title={`Voice approvals on (${where})`}
       />
     )
@@ -92,7 +92,7 @@ function VoiceApprovalRows() {
     return (
       <Row
         detail={`${(Number(allowanceLeft()) / LAMPORTS).toFixed(4)} SOL left to spend by voice · Revoke returns it`}
-        last
+        last={last}
         right={<RevokeButton />}
         title="Voice approvals on"
       />
@@ -136,7 +136,13 @@ function VoiceApprovalRows() {
   }
 
   return (
-    <View style={{ paddingVertical: 14 }}>
+    <View
+      style={{
+        borderBottomColor: c.sep,
+        borderBottomWidth: last ? 0 : StyleSheet.hairlineWidth * 2, // same divider as a Row
+        paddingVertical: 14,
+      }}
+    >
       <Txt style={{ fontSize: 17, fontWeight: '600' }}>Voice approvals</Txt>
       <Txt style={{ marginTop: 4 }} v="sub">
         Say “approve” instead of signing. Cue can only spend what you set aside here, and Revoke gives back what’s left.
@@ -460,35 +466,32 @@ export function CueSettings() {
 
         <Animated.View entering={enter(1)}>
           <SectionLabel first>Permissions</SectionLabel>
+          {/* One card: voice approvals, then what Cue may spend or still holds on this network. */}
           <Rows>
-            <VoiceApprovalRows />
+            <VoiceApprovalRows last={sameNetworkAllowance} />
+            {sameNetworkAllowance ? null : delegated !== null || cueHolds > 5_000n || holdings?.ownerWsolOpen ? (
+              <Animated.View exiting={FadeOutLeft.duration(260)} layout={LinearTransition}>
+                <Row
+                  detail={
+                    buyRules
+                      ? `${buyRules} buy rule${buyRules === 1 ? '' : 's'} waiting · Revoke returns everything`
+                      : 'Revoke returns everything Cue holds'
+                  }
+                  last
+                  right={<RevokeButton />}
+                  title={
+                    delegated
+                      ? `Can spend up to ${solAmount(delegated)} SOL`
+                      : `Cue holds ${solAmount(cueHolds)} SOL for you`
+                  }
+                />
+              </Animated.View>
+            ) : (
+              <Txt style={{ fontSize: 15, paddingVertical: 18, textAlign: 'center' }} v="sub">
+                {`Nothing else granted on ${cluster.label}.`}
+              </Txt>
+            )}
           </Rows>
-          {sameNetworkAllowance ? null : (
-            <Rows>
-              {delegated !== null || cueHolds > 5_000n || holdings?.ownerWsolOpen ? (
-                <Animated.View exiting={FadeOutLeft.duration(260)} layout={LinearTransition}>
-                  <Row
-                    detail={
-                      buyRules
-                        ? `${buyRules} buy rule${buyRules === 1 ? '' : 's'} waiting · Revoke returns everything`
-                        : 'Revoke returns everything Cue holds'
-                    }
-                    last
-                    right={<RevokeButton />}
-                    title={
-                      delegated
-                        ? `Can spend up to ${solAmount(delegated)} SOL`
-                        : `Cue holds ${solAmount(cueHolds)} SOL for you`
-                    }
-                  />
-                </Animated.View>
-              ) : (
-                <Txt style={{ fontSize: 15, paddingVertical: 22, textAlign: 'center' }} v="sub">
-                  {`Nothing granted on ${cluster.label}. Cue asks first, once.`}
-                </Txt>
-              )}
-            </Rows>
-          )}
         </Animated.View>
 
         <Animated.View entering={enter(2)}>
