@@ -165,6 +165,7 @@ class CueWakeWordService : Service() {
     val done = CountDownLatch(1)
     var clip: String? = null
     AudioCapture.start(fixedMs) { event, payload ->
+      if (event == "onAudioPause") return@start // the early send is for the app's own listening screen
       if (event == "onAudioCaptured") clip = payload["wav"] as? String
       done.countDown()
     }

@@ -31,6 +31,8 @@ object AudioCapture {
   private const val MIN_QUIET_RMS = 300.0
   private const val OVER_CHIME_FRAMES = 100 // 2 s, longer than the chime
   private const val OVER_CHIME_GRACE_MS = 1_500 // speech starting this soon after the chime may have begun over it
+  private const val QUIET_SHARE_OF_SPEECH = 0.2
+  private const val EARLY_SEND_MS = 700 // a pause this long sends what was said so far, ahead of the end
   private const val MIN_VOICED_MS = 250 // shorter than any word: a sound this brief that's followed by quiet isn't speech // below this counts as silence; lower than the start level so soft words aren't cut off
 
   @Volatile private var running = false
@@ -78,6 +80,8 @@ object AudioCapture {
         var recordedMs = 0
         var heardSomething = false
         val overChime = ArrayDeque<ShortArray>()
+        var heldEarly = false
+        var speechPeak = 0.0
         var elapsedMs = 0
 
         while (running) {
@@ -110,7 +114,9 @@ object AudioCapture {
             if (++calibrationFrames == 10) noiseFloor = minOf(noiseFloor, MAX_NOISE_FLOOR)
           }
           val threshold = maxOf(noiseFloor * 3.0, MIN_SPEECH_RMS)
-          val quietThreshold = maxOf(noiseFloor * 1.5, MIN_QUIET_RMS) // quiet syllables mid-sentence aren't silence
+          // Quiet is judged against the speaker's own level as well as the room: a fifth of how loud they speak, so a
+          // noisy room can't hold the recording open, yet a soft syllable mid-sentence still counts as speech.
+          val quietThreshold = maxOf(noiseFloor * 1.5, speechPeak * QUIET_SHARE_OF_SPEECH, MIN_QUIET_RMS)
           val copy = frame.copyOf()
 
           if (fixedMs > 0) {
@@ -146,25 +152,41 @@ object AudioCapture {
               preRoll.clear()
               silentMs = 0
               voicedMs = 0
+              speechPeak = rms
             } else if (elapsedMs >= NO_SPEECH_MS) {
               result = "onAudioError" to mapOf("message" to "nospeech")
               break
             }
           } else {
             clip.write(toBytes(copy))
+            // Slowly-decaying peak of the voice, so one shout doesn't set the bar for the rest of the sentence.
+            speechPeak = maxOf(rms, speechPeak * 0.995)
             silentMs = if (rms < quietThreshold) silentMs + FRAME_MS else 0
-            if (rms >= quietThreshold) voicedMs += FRAME_MS
+            if (rms >= quietThreshold) {
+              voicedMs += FRAME_MS
+              heldEarly = false // they kept talking: whatever was sent early is out of date
+            }
+            // A pause: send what was said so far, so the assistant is already working if this turns out to be the
+            // end. Recording carries on; if they speak again, the full clip is sent at the end instead.
+            if (silentMs == EARLY_SEND_MS && voicedMs >= MIN_VOICED_MS && !heldEarly) {
+              heldEarly = true
+              emit("onAudioPause", mapOf("wav" to Base64.encodeToString(toWav(clip.toByteArray()), Base64.NO_WRAP)))
+            }
             if (silentMs >= END_SILENCE_MS && voicedMs < MIN_VOICED_MS && elapsedMs < NO_SPEECH_MS) {
               // A blip (the chime's echo, a tap), not speech: forget it and keep waiting for the user to talk.
               Log.d("CueAudioCapture", "ignored a ${voicedMs}ms blip at ${elapsedMs}ms")
               speaking = false
               loudRun = 0
+              speechPeak = 0.0
               clip.reset()
               continue
             }
             if (silentMs >= END_SILENCE_MS || elapsedMs >= MAX_CLIP_MS) {
-              Log.d("CueAudioCapture", "speech end at ${elapsedMs}ms, ${voicedMs}ms voiced")
-              result = "onAudioCaptured" to mapOf("wav" to Base64.encodeToString(toWav(clip.toByteArray()), Base64.NO_WRAP))
+              Log.d("CueAudioCapture", "speech end at ${elapsedMs}ms, ${voicedMs}ms voiced, quiet below ${quietThreshold.toInt()} (peak ${speechPeak.toInt()}, room ${noiseFloor.toInt()})")
+              result = "onAudioCaptured" to mapOf(
+                "sameAsPause" to heldEarly, // nothing said since the early send: its answer stands
+                "wav" to Base64.encodeToString(toWav(clip.toByteArray()), Base64.NO_WRAP),
+              )
               break
             }
           }

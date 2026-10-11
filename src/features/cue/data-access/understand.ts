@@ -193,6 +193,7 @@ export async function understandAudio(
   if (!API_URL) return null
   const abort = new AbortController()
   const timer = setTimeout(() => abort.abort(), AUDIO_TIMEOUT_MS)
+  const sentAt = Date.now()
   try {
     const response = await fetch(`${API_URL}/api/parse-intent`, {
       body: JSON.stringify({ audio: wavBase64, contacts, mimeType: 'audio/wav', tokens: WATCHABLE_TOKENS }),
@@ -203,6 +204,12 @@ export async function understandAudio(
     await throwIfQuota(response)
     if (!response.ok) throw new Error(`parse-intent ${response.status}`)
     const body = (await response.json()) as { draft?: unknown; transcript?: unknown }
+    if (__DEV__) {
+      // TEMP timing: round trip vs. what the server reports, the rest being upload/download.
+      console.log(
+        `[CueTiming] assistant round trip ${Date.now() - sentAt} ms (${Math.round((wavBase64.length * 3) / 4 / 1024)} KB audio), server: ${response.headers.get('server-timing')}`,
+      )
+    }
     const intent = toIntent(body)
     if (!intent) throw new Error('parse-intent returned an unusable intent')
     return {

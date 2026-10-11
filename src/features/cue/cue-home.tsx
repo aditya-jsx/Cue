@@ -1,15 +1,22 @@
 import Ionicons from '@expo/vector-icons/Ionicons'
 import { useStore } from '@nanostores/react'
 import { useQuery } from '@tanstack/react-query'
+import { useEffect } from 'react'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
+import { router } from 'expo-router'
 import { Alert, RefreshControl, ScrollView, View } from 'react-native'
 import Animated, { FadeInDown, LinearTransition } from 'react-native-reanimated'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { useAppCluster } from '@/features/cluster/data-access/cluster-provider'
-import { $homeNotice, flow, SUGGESTIONS } from '@/features/cue/data-access/cue-store'
+import { $homeNotice, $question, flow, SUGGESTIONS } from '@/features/cue/data-access/cue-store'
+import { answerQuestion } from '@/features/cue/util/answer'
+import { speak } from '@/features/cue/util/speech'
+import { $prices } from '@/features/prices/data-access/price-store'
 import { mainnetRpc, skrNamesOf } from '@/features/cue/data-access/skr'
+import { $voiceAllowances, allowanceLeft, voiceApprovalsOn } from '@/features/cue/data-access/voice-allowance'
 import {
+  $delegations,
   $triggers,
   cancelTrigger,
   describeTrigger,
@@ -40,6 +47,34 @@ function formatSol(lamports: bigint) {
   return `${whole.toLocaleString()}${frac ? `.${frac}` : ''}`
 }
 
+/** Answers a spoken question out loud and puts the answer in the Home banner; nothing slides up. */
+function useAnswerQuestions(owner: string) {
+  const question = useStore($question)
+  const { client, cluster } = useAppCluster()
+  useEffect(() => {
+    if (!question) return
+    $question.set(null)
+    const rules = $triggers.get().filter((t) => t.status === 'active' && onCluster(t, cluster.id))
+    answerQuestion({
+      client,
+      owner,
+      prices: $prices.get(),
+      question: question.question,
+      rules,
+      symbol: question.symbol,
+    })
+      .then((a) => {
+        speak(a.spoken)
+        $homeNotice.set({ canEdit: false, reason: a.text, text: question.text })
+      })
+      .catch(() => {
+        const sorry = "I couldn't check that right now. Try again in a moment."
+        speak(sorry)
+        $homeNotice.set({ canEdit: false, reason: sorry, text: question.text })
+      })
+  }, [client, cluster.id, owner, question])
+}
+
 export function CueHome() {
   const c = useCue()
   const insets = useSafeAreaInsets()
@@ -47,6 +82,12 @@ export function CueHome() {
   const { cluster } = useAppCluster()
   const rules = useStore($triggers).filter((t) => t.status === 'active' && onCluster(t, cluster.id))
   const notice = useStore($homeNotice)
+  useStore($voiceAllowances) // re-render when voice approvals are turned on or off
+  useStore($delegations) // ...or spent from
+  useStore($triggers)
+  const voiceOn = voiceApprovalsOn()
+  const solLeft = Number((Number(allowanceLeft()) / 1e9).toFixed(4)).toString()
+  useAnswerQuestions(account!.address)
   const balance = useGetBalance(account!.address)
   const value = balance.data?.value
   const address = account!.address.toString()
@@ -138,9 +179,20 @@ export function CueHome() {
                 <Txt style={{ color: c.muted, fontSize: 20, fontWeight: '500', letterSpacing: 0 }}> SOL</Txt>
               ) : null}
             </Txt>
-            <Txt style={{ marginTop: 12 }} v="mono">
-              {cluster.label}
-            </Txt>
+            <View
+              style={{ alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginTop: 12 }}
+            >
+              <Txt v="mono">{cluster.label}</Txt>
+              {/* What Cue may spend by voice here, or how to let it: the hook into going fully voice-controlled. */}
+              <Press
+                label={voiceOn ? 'Voice allowance' : 'Set up voice approvals'}
+                onPress={() => router.push('/settings')}
+              >
+                <Txt style={{ color: voiceOn ? c.muted : c.text, fontWeight: voiceOn ? '400' : '600' }} v="k">
+                  {voiceOn ? `Cue can spend ${solLeft} SOL by voice` : 'Voice approvals off · Set up'}
+                </Txt>
+              </Press>
+            </View>
           </Glass>
         </Animated.View>
 

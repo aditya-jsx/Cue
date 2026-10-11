@@ -45,7 +45,14 @@ function say(text: string): Promise<void> {
       resolve()
     }
     // If the voice isn't on this phone, Android falls back to its default voice for the language.
-    Speech.speak(text, { language: 'en-US', onDone: done, onError: done, onStopped: done, voice: VOICES[$voice.get()] })
+    Speech.speak(text, {
+      language: 'en-US',
+      onDone: done,
+      onError: done,
+      onStopped: done,
+      rate: 1.1, // a touch quicker than Android's default, so replies don't drag
+      voice: VOICES[$voice.get()],
+    })
   })
 }
 

@@ -182,6 +182,7 @@ export async function POST(request: Request): Promise<Response> {
     : `${context}\nCommand: ${JSON.stringify(text)}${heard && heard !== text ? `\nRaw speech recognition: ${JSON.stringify(heard)}` : ''}`
 
   const reply = body?.mode === 'reply' && Boolean(audio)
+  const startedAt = Date.now()
   const identity = identify(request.headers)
   const rules = rulesFor(Number(process.env.CUE_DAILY_BUDGET) || 5000, reply)
   const verdict = await limit(identity, rules)
@@ -204,13 +205,16 @@ export async function POST(request: Request): Promise<Response> {
     systemInstruction: reply ? REPLY_SYSTEM : SYSTEM,
     temperature: 0,
   }
-  // Gemini answers "503 high demand" in bursts: retry briefly, and on the last try use the lighter model.
+  // Flash-lite first: measured 1.0-1.3 s per command against 1.5-3.8 s for 2.5 Flash, equally accurate on Cue's commands,
+  // and 2.5 Flash's free-tier quota runs out after a few requests. Gemini answers "503 high demand" in bursts: retry
+  // briefly, and on the last try use the other model.
   // Set GEMINI_MODELS (comma-separated) to swap a retired model without a code change.
-  const MODELS = (process.env.GEMINI_MODELS ?? 'gemini-2.5-flash,gemini-2.5-flash,gemini-3.5-flash-lite')
+  const MODELS = (process.env.GEMINI_MODELS ?? 'gemini-3.5-flash-lite,gemini-3.5-flash-lite,gemini-2.5-flash')
     .split(',')
     .map((m: string) => m.trim())
     .filter(Boolean)
 
+  const limitsMs = Date.now() - startedAt
   try {
     let response!: Awaited<ReturnType<typeof ai.models.generateContent>>
     for (let attempt = 0; attempt < MODELS.length; attempt++) {
@@ -239,6 +243,8 @@ export async function POST(request: Request): Promise<Response> {
         await new Promise((resolve) => setTimeout(resolve, 600 * (attempt + 1)))
       }
     }
+    // Where the time went, for the app's timing log (standard Server-Timing header).
+    const timing = { 'server-timing': `limits;dur=${limitsMs}, gemini;dur=${Date.now() - startedAt - limitsMs}` }
     const finish = response.candidates?.[0]?.finishReason
     if (!response.text || finish !== 'STOP') {
       return UNSUPPORTED("I couldn't work that out. Try saying it another way.")
@@ -250,11 +256,11 @@ export async function POST(request: Request): Promise<Response> {
           answer: answer.answer === 'approve' || answer.answer === 'decline' ? answer.answer : 'unclear',
           transcript: typeof answer.transcript === 'string' ? answer.transcript.trim().slice(0, 200) : '',
         },
-        { headers: NO_STORE },
+        { headers: { ...NO_STORE, ...timing } },
       )
     }
     const result = toCueIntent(JSON.parse(response.text) as Raw)
-    return Response.json(audio ? result : { ...result, transcript: text }, { headers: NO_STORE })
+    return Response.json(audio ? result : { ...result, transcript: text }, { headers: { ...NO_STORE, ...timing } })
   } catch (error) {
     if (error instanceof ApiError) {
       console.error('[parse-intent] Gemini error', error.status, error.message)

@@ -58,8 +58,6 @@ import {
   shortAddr,
 } from '@/features/cue/data-access/cue-store'
 import {
-  $triggers,
-  onCluster,
   activeBuyLamports,
   formatUsd,
   type GuardAction,
@@ -71,10 +69,7 @@ import { $prices, type Symbol } from '@/features/prices/data-access/price-store'
 import CueNative from '../../../modules/cue-native'
 import { executeDelegationGrant } from '@/features/wallet/util/execute-delegation'
 import { executeInstantSend } from '@/features/wallet/util/execute-instant-send'
-import { voiceApprovalsOn } from '@/features/cue/data-access/voice-allowance'
-import { activeCluster } from '@/features/cluster/data-access/active-client'
 import { CUE_FEE_BPS, CUE_TREASURY } from '@/features/wallet/util/tokens'
-import { answerQuestion } from '@/features/cue/util/answer'
 import { speak, speakAndWait } from '@/features/cue/util/speech'
 import { spokenApproved, spokenConfirm } from '@/features/cue/util/spoken'
 import { mainnetRpc, resolveSkr, skrLabel } from '@/features/cue/data-access/skr'
@@ -168,16 +163,23 @@ function Listening({ covered }: { covered: boolean }) {
     CueNative.stopWakeWordService()
     CueNative.startAudioCapture()
     let cancelled = false
+    // Sent at a pause, before the recording ends: used as is when nothing more was said, which saves the wait.
+    let early: ReturnType<typeof flow.hearEarly> | null = null
     const subs = [
-      CueNative.addListener('onAudioCaptured', ({ wav }) => {
+      CueNative.addListener('onAudioPause', ({ wav }) => {
+        if (!cancelled) early = flow.hearEarly(wav)
+      }),
+      CueNative.addListener('onAudioCaptured', ({ sameAsPause, wav }) => {
         if (cancelled) return
         setThinking(true)
         resumeWakeWord()
-        void flow.finishAudio(wav).then((reached) => {
+        void (async () => {
+          const heard = sameAsPause && early ? await early.catch(() => null) : null
+          const reached = await flow.finishAudio(wav, heard ?? undefined)
           if (reached || cancelled) return
           setThinking(false)
           flow.useAndroidFallback()
-        })
+        })()
       }),
       CueNative.addListener('onAudioError', ({ message }) => {
         if (cancelled) return
@@ -643,9 +645,9 @@ function Confirm() {
           </>
         ) : (
           <>
-            {voiceApprovalsOn() && whyNotByVoice(plan) ? (
+            {whyNotByVoice(plan) ? (
               <Txt style={{ textAlign: 'center' }} v="k">
-                {whyNotByVoice(plan)!.replace(', so tap continue to sign.', '.')}
+                {whyNotByVoice(plan)?.shown}
               </Txt>
             ) : null}
             {plan.kind === 'buy' ? <CueButton label="Continue" onPress={flow.review} /> : null}
@@ -680,53 +682,8 @@ function Confirm() {
   )
 }
 
-/** A question about the wallet, looked up and said out loud. */
-function Answer({ question, symbol }: { question: 'balance' | 'price' | 'rules'; symbol?: Symbol }) {
-  const { text } = useStore($flow)
-  const { account } = useMobileWallet()
-  const { client } = useAppCluster()
-  const [answer, setAnswer] = useState<string | null>(null)
-  useEffect(() => {
-    let live = true
-    const rules = $triggers.get().filter((t) => t.status === 'active' && onCluster(t, activeCluster().id))
-    answerQuestion({ client, owner: account!.address, prices: $prices.get(), question, rules, symbol })
-      .then((a) => {
-        if (!live) return
-        setAnswer(a.text)
-        speak(a.spoken)
-      })
-      .catch(() => {
-        if (!live) return
-        const sorry = "I couldn't check that right now. Try again in a moment."
-        setAnswer(sorry)
-        speak(sorry)
-      })
-    return () => {
-      live = false
-    }
-  }, [account, client, question, symbol])
-  return (
-    <Sheet>
-      {text ? (
-        <>
-          <Txt v="k">You asked</Txt>
-          <Txt style={{ marginTop: 6 }} v="h">
-            {text}
-          </Txt>
-        </>
-      ) : null}
-      <Txt style={{ fontSize: 22, fontWeight: '600', marginTop: 16 }}>{answer ?? 'Checking…'}</Txt>
-      <View style={{ gap: 12, paddingTop: 22 }}>
-        <CueButton label="Ask something else" onPress={flow.retry} />
-        <CueButton label="Close" onPress={flow.cancel} variant="glass" />
-      </View>
-    </Sheet>
-  )
-}
-
 function NotSupported() {
   const { draft, plan, text } = useStore($flow)
-  if (plan.kind === 'answer') return <Answer question={plan.question} symbol={plan.symbol} />
   return (
     <Sheet>
       {text ? (

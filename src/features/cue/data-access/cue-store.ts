@@ -318,6 +318,9 @@ async function prepare(intent: Intent): Promise<Plan> {
  */
 export const $homeNotice = atom<{ canEdit: boolean; reason: string; text: string } | null>(null)
 
+/** A question for Home to answer out loud (it has the wallet and network the answer needs); no sheet opens. */
+export const $question = atom<{ question: 'balance' | 'price' | 'rules'; symbol?: Symbol; text: string } | null>(null)
+
 function route(text: string, plan: Plan, draft: Draft | null) {
   $flow.set({ ...$flow.get(), draft, plan, signature: null, text })
   // The manual form keeps its sheet, so what was typed isn't thrown away.
@@ -327,11 +330,16 @@ function route(text: string, plan: Plan, draft: Draft | null) {
     speak(plan.reason)
     return
   }
-  push(plan.kind === 'nope' || plan.kind === 'answer' ? 'nope' : 'confirm')
+  if (plan.kind === 'answer') {
+    $flow.set({ ...$flow.get(), stack: [] })
+    $question.set({ question: plan.question, symbol: plan.symbol, text })
+    return
+  }
+  push(plan.kind === 'nope' ? 'nope' : 'confirm')
   // Said back so a misheard amount or name is caught by ear; with voice approvals the sheet says it and then listens.
   if (!canApproveByVoice(plan)) {
-    const why = voiceApprovalsOn() ? whyNotByVoice(plan) : null
-    speak(why ? spokenConfirm(plan).replace('Tap continue.', why) : spokenConfirm(plan))
+    const why = whyNotByVoice(plan)
+    speak(why ? spokenConfirm(plan).replace('Tap continue.', why.spoken) : spokenConfirm(plan))
   }
 }
 
@@ -365,6 +373,8 @@ export const flow = {
     if (!stillListening(ticket)) return
     route(text, plan, draft)
   },
+  /** The clip so far, sent at a pause while recording continues (see the listening screen). */
+  hearEarly: (wav: string) => hear(wav),
   /** A recorded clip goes to the assistant, which hears and parses it. Returns false if it couldn't be reached. */
   async finishAudio(wav: string, alreadyHeard?: Heard): Promise<boolean> {
     const ticket = ++understanding
@@ -609,7 +619,8 @@ export async function understandOffScreen(wav: string) {
     return
   }
   // Voice approvals, phone unlocked: the whole exchange happens by voice, wherever the user is.
-  if (result && plan && canApproveByVoice(plan) && !CueNative.isDeviceLocked()) {
+  // (Off screen the allowance says whose wallet to act for, so this needs one even for a guard or an alert.)
+  if (result && plan && canApproveByVoice(plan) && voiceAllowance() && !CueNative.isDeviceLocked()) {
     await approveByVoice(plan, voiceAllowance()!.owner, activeSolanaClient(), 'notify')
     return
   }
@@ -674,8 +685,8 @@ const sol = (lamports: bigint) => Number((Number(lamports) / 1e9).toFixed(4)).to
  * address can't be paid by voice.
  */
 export function canApproveByVoice(plan: Plan): boolean {
+  if (plan.kind === 'guard' || plan.kind === 'alert') return true // they move no money, so no allowance is needed
   if (!voiceApprovalsOn()) return false
-  if (plan.kind === 'guard' || plan.kind === 'alert') return true
   if (plan.kind === 'buy') return plan.amountLamports <= allowanceLeft() // checked in prepareIntent too
   if (plan.kind === 'send') {
     const toNamed = !plan.recipientName.includes('…')
@@ -684,12 +695,28 @@ export function canApproveByVoice(plan: Plan): boolean {
   return false
 }
 
-/** Voice approvals are on but this one needs a tap: say why, so it doesn't look like voice approval broke. */
-export function whyNotByVoice(plan: Plan): string | null {
-  if (plan.kind === 'send' && plan.recipientName.includes('…'))
-    return 'Voice approvals only pay saved contacts or Seeker names, so tap continue to sign.'
-  if (plan.kind === 'send') return "That's more than your voice allowance has left, so tap continue to sign."
-  return null
+/**
+ * A send or buy that needs a tap instead of "approve": why, and how to make it voice-only next time. `spoken` replaces
+ * "Tap continue." in what Cue says; `shown` goes on the sheet.
+ */
+export function whyNotByVoice(plan: Plan): { shown: string; spoken: string } | null {
+  if ((plan.kind !== 'send' && plan.kind !== 'buy') || canApproveByVoice(plan)) return null
+  if (!voiceApprovalsOn()) {
+    return {
+      shown: 'To approve by voice, give Cue some SOL in Settings, under Voice approvals.',
+      spoken: 'Tap continue. To approve by voice instead, give Cue some SOL in Settings, under Voice approvals.',
+    }
+  }
+  if (plan.kind === 'send' && plan.recipientName.includes('…')) {
+    return {
+      shown: 'Voice approvals only pay saved contacts or Seeker names.',
+      spoken: 'Voice approvals only pay saved contacts or Seeker names, so tap continue.',
+    }
+  }
+  return {
+    shown: "That's more than your voice allowance has left. You can top it up in Settings.",
+    spoken: "That's more than your voice allowance has left, so tap continue. You can top it up in Settings.",
+  }
 }
 
 /**

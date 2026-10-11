@@ -25,7 +25,7 @@ class CueNativeModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("CueNative")
 
-    Events("onWakeWordDetected", "onSpeechPartial", "onSpeechResult", "onSpeechError", "onAudioCaptured", "onAudioError", "onBackgroundCommand")
+    Events("onWakeWordDetected", "onSpeechPartial", "onSpeechResult", "onSpeechError", "onAudioCaptured", "onAudioError", "onAudioPause", "onBackgroundCommand")
 
     Function("startHeartbeatService") {
       val ctx = appContext.reactContext ?: throw Exceptions.ReactContextLost()

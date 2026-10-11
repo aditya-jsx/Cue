@@ -2,8 +2,9 @@ import { requireNativeModule } from 'expo'
 import { NativeModule } from 'expo-modules-core'
 
 type CueNativeEvents = {
-  onAudioCaptured(payload: { wav: string }): void
+  onAudioCaptured(payload: { sameAsPause?: boolean; wav: string }): void
   onAudioError(payload: { message: string }): void
+  onAudioPause(payload: { wav: string }): void
   onBackgroundCommand(payload: { wav: string }): void
   onSpeechError(payload: { message: string }): void
   onSpeechPartial(payload: { text: string }): void
