@@ -10,9 +10,7 @@ export interface ClusterContextValue {
   client: SolanaClient
   cluster: SolanaCluster
   clusters: AppCluster[]
-  resetClusters(): void
   setCluster(cluster: SolanaClusterId): void
-  updateClusterUrl(cluster: SolanaClusterId, url: string): void
 }
 
 export interface ClusterProviderProps {
@@ -31,11 +29,9 @@ export function ClusterProvider({ children, store }: PropsWithChildren<ClusterPr
       client,
       cluster,
       clusters,
-      resetClusters: store.resetClusters,
       setCluster: store.setCluster,
-      updateClusterUrl: store.updateClusterUrl,
     }),
-    [client, cluster, clusters, store.resetClusters, store.setCluster, store.updateClusterUrl],
+    [client, cluster, clusters, store.setCluster],
   )
 
   return <ClusterContext.Provider value={value}>{children}</ClusterContext.Provider>

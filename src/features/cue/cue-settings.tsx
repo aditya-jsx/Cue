@@ -394,7 +394,42 @@ function Toggle({ label, on, onPress }: { label: string; on: boolean; onPress: (
   )
 }
 
-function LinkRow({ href, label }: { href: '/settings/cluster' | '/tools'; label: string }) {
+/**
+ * Devnet (free test SOL) or Mainnet (real SOL). Both run through Cue's own server, so there's nothing to configure;
+ * each network keeps its own rules, permissions and activity. Moving to real money asks first.
+ */
+function NetworkSwitch() {
+  const { cluster, clusters, setCluster } = useAppCluster()
+  const options = clusters.filter((c) => c.isEnabled)
+  if (options.length < 2) return null
+  const choose = (i: number) => {
+    const next = options[i]
+    if (!next || next.id === cluster.id) return
+    if (next.id !== 'solana:mainnet') return setCluster(next.id)
+    Alert.alert(
+      'Use real SOL?',
+      'On Mainnet, sends and buys spend real money. Your Devnet rules and activity stay on Devnet.',
+      [
+        { style: 'cancel', text: 'Stay on Devnet' },
+        { onPress: () => setCluster(next.id), text: 'Switch to Mainnet' },
+      ],
+    )
+  }
+  return (
+    <>
+      <Segment
+        onChange={choose}
+        options={options.map((c) => (c.id === 'solana:mainnet' ? 'Mainnet · real SOL' : 'Devnet · test SOL'))}
+        value={Math.max(
+          0,
+          options.findIndex((c) => c.id === cluster.id),
+        )}
+      />
+    </>
+  )
+}
+
+function LinkRow({ href, label }: { href: '/tools'; label: string }) {
   const c = useCue()
   return (
     <Link asChild href={href}>
@@ -406,11 +441,23 @@ function LinkRow({ href, label }: { href: '/settings/cluster' | '/tools'; label:
 }
 
 /** Wipes Cue's data from this phone, after explaining what it does and doesn't remove. */
-function confirmDeleteData(hasPermission: boolean, disconnect: () => Promise<void>) {
-  if (hasPermission) {
+/**
+ * Networks where Cue still has permission to spend, or still holds funds: deleting the session key there would strand
+ * them, so they have to be revoked first. Checks every network, not just the one on screen.
+ */
+function networksToRevoke(currentId: string, holdsHere: boolean): string[] {
+  const ids = new Set(Object.keys($delegations.get()))
+  const allowance = $voiceAllowance.get()
+  if (allowance) ids.add(allowance.cluster ?? 'solana:devnet')
+  if (holdsHere) ids.add(currentId)
+  return [...ids].map((id) => (id === 'solana:mainnet' ? 'Mainnet' : 'Devnet'))
+}
+
+function confirmDeleteData(revokeOn: string[], disconnect: () => Promise<void>) {
+  if (revokeOn.length) {
     Alert.alert(
-      'Revoke your permission first',
-      'Cue still has permission to spend for your buy rules. Revoke it under Permissions, then delete your data.',
+      'Revoke first',
+      `Cue still has permission or holds funds on ${revokeOn.join(' and ')}. Switch there under Network and tap Revoke, then delete your data.`,
     )
     return
   }
@@ -495,6 +542,8 @@ export function CueSettings() {
         </Animated.View>
 
         <Animated.View entering={enter(2)}>
+          <SectionLabel>Network</SectionLabel>
+          <NetworkSwitch />
           <SectionLabel>Background</SectionLabel>
           <Rows>
             <BackgroundRow />
@@ -568,7 +617,6 @@ export function CueSettings() {
           <Rows>
             {__DEV__ ? (
               <>
-                <LinkRow href="/settings/cluster" label="Network" />
                 <LinkRow href="/tools" label="Developer tools" />
                 <PollStatsRow />
                 <Pressable accessibilityRole="button" onPress={resetOnboarding}>
@@ -576,7 +624,15 @@ export function CueSettings() {
                 </Pressable>
               </>
             ) : null}
-            <Pressable accessibilityRole="button" onPress={() => confirmDeleteData(delegated !== null, disconnect)}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() =>
+                confirmDeleteData(
+                  networksToRevoke(cluster.id, cueHolds > 5_000n || Boolean(holdings?.ownerWsolOpen)),
+                  disconnect,
+                )
+              }
+            >
               <Row detail="Removes your contacts, activity and rules from this phone" title="Delete my data" />
             </Pressable>
             <Pressable accessibilityRole="button" onPress={() => void disconnect()}>

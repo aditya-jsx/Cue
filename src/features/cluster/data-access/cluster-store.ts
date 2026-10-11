@@ -7,7 +7,6 @@ import {
 } from '@wallet-ui/react-native-kit'
 import type { SolanaClusterId } from '@wallet-ui/react-native-kit'
 
-import { isRpcUrl } from '@/features/cluster/data-access/is-rpc-url'
 import type { SyncCache } from '@/features/cluster/data-access/sync-cache'
 
 export interface AppCluster {
@@ -48,16 +47,6 @@ export const DEFAULT_CLUSTERS = [
     id: 'solana:devnet' as SolanaClusterId,
     label: 'Devnet',
     url: cueRpc('devnet') || 'https://api.devnet.solana.com',
-  },
-  {
-    id: 'solana:testnet' as SolanaClusterId,
-    label: 'Testnet',
-    url: 'https://api.testnet.solana.com',
-  },
-  {
-    id: 'solana:localnet' as SolanaClusterId,
-    label: 'Localhost',
-    url: '',
   },
   {
     id: 'solana:mainnet' as SolanaClusterId,
@@ -139,14 +128,9 @@ function getStoredClusterState(value: unknown): StoredClusterState {
 
 function normalizeState(value: unknown) {
   const stored = getStoredClusterState(value)
-  const clusters = DEFAULT_CLUSTERS.map((cluster) => {
-    const storedUrl = stored.clusters?.find((item) => item.id === cluster.id)?.url?.trim()
-    return createAppCluster({
-      ...cluster,
-      // A saved value that is not a real URL (an older bad entry) would crash startup, so fall back to the default.
-      url: storedUrl !== undefined && isRpcUrl(storedUrl) ? storedUrl : cluster.url,
-    })
-  })
+  // Only the chosen network is remembered: both always go through Cue's server, so a URL saved by an older build
+  // (users could once paste their own) is ignored.
+  const clusters = DEFAULT_CLUSTERS.map(createAppCluster)
   const fallbackCluster = findFallbackCluster(clusters, stored.clusterId)
 
   return fallbackCluster ? { clusterId: fallbackCluster.id, clusters } : createDefaultState()
@@ -192,10 +176,6 @@ export function createClusterStore(context: ClusterStoreContext) {
     $clusterId.set(state.clusterId)
   }
 
-  function resetClusters() {
-    setState(createDefaultState())
-  }
-
   function setCluster(clusterId: SolanaClusterId) {
     const state = getState()
 
@@ -206,29 +186,11 @@ export function createClusterStore(context: ClusterStoreContext) {
     setState({ ...state, clusterId })
   }
 
-  function updateClusterUrl(clusterId: SolanaClusterId, url: string) {
-    if (!isRpcUrl(url.trim())) {
-      throw new Error('Enter the full RPC URL, starting with https:// (not just the API key).')
-    }
-    const state = getState()
-    const clusters = state.clusters.map((cluster) =>
-      cluster.id === clusterId ? createAppCluster({ ...cluster, url }) : cluster,
-    )
-    const nextClusterId = findFallbackCluster(clusters, state.clusterId)?.id ?? DEFAULT_CLUSTER_ID
-
-    setState({
-      clusterId: nextClusterId,
-      clusters,
-    })
-  }
-
   return {
     $cluster,
     $clusterId,
     $clusters,
-    resetClusters,
     setCluster,
-    updateClusterUrl,
   }
 }
 
