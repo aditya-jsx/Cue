@@ -12,7 +12,8 @@ import { ShellUiThemeStatusBar } from '@/features/shell/ui/shell-ui-theme-status
 
 // Wallets verify this origin's /.well-known/assetlinks.json against our package + signing key (MWA identity).
 // Source of that file: the cue-links Vercel project. Add the release keystore fingerprint there before publishing.
-export const identity: AppIdentity = { name: 'Cue', uri: 'https://cue-app-one.vercel.app' }
+// icon is relative to uri; the cue-links site serves it.
+export const identity: AppIdentity = { name: 'Cue', uri: 'https://cue-app-one.vercel.app', icon: 'icon.png' }
 const queryClient = new QueryClient()
 const clusterConfig = createClusterProps()
 

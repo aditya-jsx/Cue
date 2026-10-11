@@ -87,7 +87,7 @@ class CueNativeModule : Module() {
       ctx.getSystemService(StatusBarManager::class.java).requestAddTileService(
         ComponentName(ctx, CueTileService::class.java),
         "Talk to Cue",
-        Icon.createWithResource(ctx, android.R.drawable.ic_btn_speak_now),
+        Icon.createWithResource(ctx, R.drawable.cue_notification),
         ctx.mainExecutor,
       ) { result -> promise.resolve(result) }
     }
@@ -130,7 +130,7 @@ class CueNativeModule : Module() {
         .setContentTitle(title)
         .setContentText(body)
         .setStyle(Notification.BigTextStyle().bigText(body))
-        .setSmallIcon(android.R.drawable.ic_dialog_info)
+        .setSmallIcon(R.drawable.cue_notification)
         .setContentIntent(open)
         .setAutoCancel(true)
         .build()

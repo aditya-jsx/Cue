@@ -9,6 +9,7 @@ import { CueConnect } from '@/features/cue/cue-connect'
 import { CueOnboarding } from '@/features/cue/cue-onboarding'
 import { $onboarded } from '@/features/cue/data-access/onboarding'
 import { CueFlow } from '@/features/cue/cue-flow'
+import { CueIntro } from '@/features/cue/cue-intro'
 import { CueTabBar } from '@/features/cue/cue-tab-bar'
 import { flow, takeHeardOffScreen, understandOffScreen } from '@/features/cue/data-access/cue-store'
 import { startWakeWord } from '@/features/cue/util/start-wake-word'
@@ -50,7 +51,10 @@ export default function Layout() {
 
   return (
     <AppProviders>
-      <AppTabs />
+      <View style={{ flex: 1 }}>
+        <AppTabs />
+        <CueIntro />
+      </View>
     </AppProviders>
   )
 }

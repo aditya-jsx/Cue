@@ -4,13 +4,29 @@
     "android": {
       "versionCode": 1,
       "adaptiveIcon": {
-        "backgroundColor": "#050505",
+        "backgroundColor": "#0E0E11",
         "backgroundImage": "./assets/images/android-icon-background.png",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "package": "com.cue.app",
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "cue-app-one.vercel.app"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
+      ]
     },
     "experiments": {
       "reactCompiler": true,
@@ -39,7 +55,7 @@
             "image": "./assets/images/splash-icon.png",
             "imageWidth": 76
           },
-          "backgroundColor": "#050505"
+          "backgroundColor": "#000000"
         }
       ],
       "expo-status-bar",

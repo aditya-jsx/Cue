@@ -30,7 +30,7 @@ class CueHeartbeatService : HeadlessJsTaskService() {
     val notification: Notification = Notification.Builder(this, CHANNEL)
       .setContentTitle("Cue is watching prices")
       .setContentText("Your rules keep running in the background")
-      .setSmallIcon(android.R.drawable.ic_dialog_info)
+      .setSmallIcon(R.drawable.cue_notification)
       .setOngoing(true)
       .build()
     when {
