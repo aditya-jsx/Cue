@@ -504,7 +504,9 @@ function Confirm() {
         chain: cluster.id,
         client,
         identity,
+        inputDecimals: decimalsOf(plan.from),
         inputMint: mintOf(plan.from),
+        inputSymbol: plan.from,
         outputMint: mintOf(plan.to),
       })
       const got = Number((Number(outAmount) / 10 ** decimalsOf(plan.to)).toPrecision(6))
