@@ -13,7 +13,7 @@ import Animated, {
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { useEffect, useState } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { useAppCluster } from '@/features/cluster/data-access/cluster-provider'
 import { identity } from '@/features/core/data-access/app-providers'
@@ -39,6 +39,9 @@ import { $spoken, $voice, type CueVoice, setSpoken, setVoice } from '@/features/
 import { CueButton, CuePage, Press, Row, Rows, SectionLabel, Segment, Txt } from '@/features/cue/ui/cue-ui'
 import { setTheme, type Theme, useTheme } from '@/features/shell/data-access/use-theme'
 import { executeDelegationGrant, executeDelegationRevoke } from '@/features/wallet/util/execute-delegation'
+import { findAtaAddress, NATIVE_MINT_ADDRESS } from '@/features/wallet/util/spl-token'
+import { getSessionKey } from '@/features/cue/data-access/session-key'
+import { type Address, address } from '@solana/kit'
 import { useGetBalance } from '@/features/wallet/data-access/use-get-balance'
 import {
   $voiceAllowance,
@@ -54,6 +57,7 @@ const VOICE_OPTIONS: readonly CueVoice[] = ['female', 'male']
 const enter = (i: number) => FadeInDown.delay(i * 55).duration(550)
 
 const LAMPORTS = 1_000_000_000
+const solAmount = (lamports: bigint) => Number((Number(lamports) / LAMPORTS).toFixed(4)).toString()
 // What turning voice approvals on needs besides the allowance: Cue's fee money, the wrapped-SOL account's rent, the fee.
 const SETUP_RESERVE_SOL = 0.013
 
@@ -180,6 +184,48 @@ function VoiceApprovalRows() {
   )
 }
 
+/**
+ * What Cue holds for this wallet on this network, read from the chain rather than from Cue's own notes: the session
+ * key's SOL and wrapped SOL, and any spending permission left on the wallet's wrapped-SOL account. Lamports.
+ */
+function useCueHoldings(owner: string | undefined) {
+  const { client, cluster } = useAppCluster()
+  return useQuery({
+    enabled: Boolean(owner),
+    queryFn: async () => {
+      const key = await getSessionKey()
+      const [sessionSol, sessionWsol, ownerWsol] = await Promise.all([
+        key
+          ? client.rpc
+              .getBalance(key.address, { commitment: 'confirmed' })
+              .send()
+              .then((r) => r.value)
+          : 0n,
+        key ? wsolHeld(client, key.address) : 0n,
+        client.rpc
+          .getAccountInfo(await findAtaAddress(address(owner!), NATIVE_MINT_ADDRESS), {
+            commitment: 'confirmed',
+            encoding: 'base64',
+          })
+          .send()
+          .then((r) => r.value !== null),
+      ])
+      return { ownerWsolOpen: ownerWsol, total: sessionSol + sessionWsol }
+    },
+    queryKey: ['cue-holdings', cluster.id, owner],
+    staleTime: 15_000,
+  })
+}
+
+async function wsolHeld(client: ReturnType<typeof useAppCluster>['client'], holder: Address) {
+  const ata = await findAtaAddress(holder, NATIVE_MINT_ADDRESS)
+  return client.rpc
+    .getTokenAccountBalance(ata, { commitment: 'confirmed' })
+    .send()
+    .then((r) => BigInt(r.value.amount))
+    .catch(() => 0n) // no account means nothing held
+}
+
 function RevokeButton() {
   const c = useCue()
   const { account } = useMobileWallet()
@@ -200,6 +246,7 @@ function RevokeButton() {
         identity,
       })
       await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['cue-holdings'] }),
         queryClient.invalidateQueries({ queryKey: ['get-balance'] }),
         queryClient.invalidateQueries({ queryKey: ['get-transaction-signatures'] }),
       ])
@@ -210,7 +257,7 @@ function RevokeButton() {
       pushLogEntry({
         amount: '—',
         detail: `${stopped ? `Stopped ${stopped} buy rule${stopped === 1 ? '' : 's'}. ` : ''}Wrapped SOL returned to your wallet`,
-        signature,
+        signature: signature || undefined, // empty when only the session key had to give funds back
         status: 'Confirmed',
         title: 'Permission revoked',
       })
@@ -388,6 +435,10 @@ export function CueSettings() {
   const voiceAllowance = useStore($voiceAllowance)
   const { cluster } = useAppCluster()
   const delegated = delegatedLamports(cluster.id)
+  const { account: wallet } = useMobileWallet()
+  const { data: holdings } = useCueHoldings(wallet?.address)
+  const cueHolds = holdings?.total ?? 0n
+  const sameNetworkAllowance = voiceAllowance !== null && (voiceAllowance.cluster ?? 'solana:devnet') === cluster.id
   const spoken = useStore($spoken)
   const voice = useStore($voice)
   const buyRules = useStore($triggers).filter(
@@ -412,23 +463,32 @@ export function CueSettings() {
           <Rows>
             <VoiceApprovalRows />
           </Rows>
-          <Rows>
-            {voiceAllowance && (voiceAllowance.cluster ?? 'solana:devnet') === cluster.id ? null : delegated !==
-              null ? (
-              <Animated.View exiting={FadeOutLeft.duration(260)} layout={LinearTransition}>
-                <Row
-                  detail={`${buyRules} active buy rule${buyRules === 1 ? '' : 's'} · until you revoke`}
-                  last
-                  right={<RevokeButton />}
-                  title={`Spend up to ${(Number(delegated) / 1e9).toFixed(4)} WSOL`}
-                />
-              </Animated.View>
-            ) : (
-              <Txt style={{ fontSize: 15, paddingVertical: 22, textAlign: 'center' }} v="sub">
-                Nothing granted. Cue asks first, once.
-              </Txt>
-            )}
-          </Rows>
+          {sameNetworkAllowance ? null : (
+            <Rows>
+              {delegated !== null || cueHolds > 5_000n || holdings?.ownerWsolOpen ? (
+                <Animated.View exiting={FadeOutLeft.duration(260)} layout={LinearTransition}>
+                  <Row
+                    detail={
+                      buyRules
+                        ? `${buyRules} buy rule${buyRules === 1 ? '' : 's'} waiting · Revoke returns everything`
+                        : 'Revoke returns everything Cue holds'
+                    }
+                    last
+                    right={<RevokeButton />}
+                    title={
+                      delegated
+                        ? `Can spend up to ${solAmount(delegated)} SOL`
+                        : `Cue holds ${solAmount(cueHolds)} SOL for you`
+                    }
+                  />
+                </Animated.View>
+              ) : (
+                <Txt style={{ fontSize: 15, paddingVertical: 22, textAlign: 'center' }} v="sub">
+                  {`Nothing granted on ${cluster.label}. Cue asks first, once.`}
+                </Txt>
+              )}
+            </Rows>
+          )}
         </Animated.View>
 
         <Animated.View entering={enter(2)}>

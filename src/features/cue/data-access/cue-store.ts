@@ -2,7 +2,7 @@ import { address, isAddress } from '@solana/kit'
 import { atom } from 'nanostores'
 import { createMMKV } from 'react-native-mmkv'
 
-import { activeSolanaClient } from '@/features/cluster/data-access/active-client'
+import { activeCluster, activeSolanaClient } from '@/features/cluster/data-access/active-client'
 import { APP_STORAGE_ID } from '@/features/cluster/data-access/create-cluster-props'
 import type { SolanaClient } from '@/features/cluster/data-access/create-solana-client'
 import { $voiceAllowance, allowanceLeft, voiceApprovalsOn } from '@/features/cue/data-access/voice-allowance'
@@ -43,6 +43,7 @@ export type ComposeKind = 'buy' | 'guard' | 'send'
 export type LogEntry = {
   amount: string
   at?: number // absent on entries from before timestamps were stored
+  cluster?: string // the network it happened on; absent on entries from before networks were recorded (devnet)
   detail: string
   id: string
   signature?: string
@@ -121,9 +122,19 @@ export const $cue = atom<{
 })
 
 /** Prepends a real Activity entry — used by every execution path (voice, manual, and the background engine). */
-export function pushLogEntry(entry: Omit<LogEntry, 'at' | 'id'>) {
+/** Error text from a web service can be a whole HTML page: keep the words, drop the markup. */
+export const plainText = (text: string) =>
+  text
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+export function pushLogEntry(entry: Omit<LogEntry, 'at' | 'cluster' | 'id'>) {
   const cue = $cue.get()
-  const log = [{ ...entry, at: Date.now(), id: newId() }, ...cue.log].slice(0, 100)
+  const log = [
+    { ...entry, at: Date.now(), cluster: activeCluster().id, detail: plainText(entry.detail), id: newId() },
+    ...cue.log,
+  ].slice(0, 100)
   storage.set(LOG_KEY, JSON.stringify(log))
   $cue.set({ ...cue, log })
 }

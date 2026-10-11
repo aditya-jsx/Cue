@@ -197,12 +197,14 @@ export function Rows({ children }: { children: ReactNode }) {
 
 export function Row({
   detail,
+  detailLines,
   last,
   right,
   rightSub,
   title,
 }: {
   detail?: string
+  detailLines?: number // clamp a long detail (e.g. an error) to this many lines
   last?: boolean
   right?: ReactNode
   rightSub?: ReactNode
@@ -224,7 +226,7 @@ export function Row({
       <View style={{ flex: 1 }}>
         {typeof title === 'string' ? <Txt style={{ fontSize: 16 }}>{title}</Txt> : title}
         {detail ? (
-          <Txt style={{ marginTop: 2 }} v="k">
+          <Txt numberOfLines={detailLines} style={{ marginTop: 2 }} v="k">
             {detail}
           </Txt>
         ) : null}

@@ -1,12 +1,14 @@
 import { useStore } from '@nanostores/react'
 import { getExplorerUrl } from '@wallet-ui/react-native-kit'
 import * as Linking from 'expo-linking'
+import { useState } from 'react'
 import { Pressable, ScrollView } from 'react-native'
 import Animated, { FadeInDown, LinearTransition } from 'react-native-reanimated'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { useAppCluster } from '@/features/cluster/data-access/cluster-provider'
-import { $cue } from '@/features/cue/data-access/cue-store'
+import { $cue, plainText } from '@/features/cue/data-access/cue-store'
+import { onCluster } from '@/features/price-triggers/data-access/trigger-store'
 import { useCue } from '@/features/cue/cue-theme'
 import { CuePage, Row, Rows, Txt } from '@/features/cue/ui/cue-ui'
 
@@ -25,8 +27,10 @@ const legacyDetail = (detail: string) => detail.replace(/^Just now(, | — )?/, 
 export function CueActivity() {
   const c = useCue()
   const insets = useSafeAreaInsets()
-  const { log } = useStore($cue)
   const { cluster } = useAppCluster()
+  // This network's activity only: devnet test sends shouldn't sit between real mainnet buys.
+  const log = useStore($cue).log.filter((l) => onCluster(l, cluster.id))
+  const [expanded, setExpanded] = useState<string | null>(null)
   const open = (signature: string) =>
     void Linking.openURL(
       getExplorerUrl({ network: { id: cluster.id, url: cluster.url }, path: `/tx/${signature}`, provider: 'solana' }),
@@ -45,15 +49,23 @@ export function CueActivity() {
         </Animated.View>
         <Animated.View entering={FadeInDown.delay(60).duration(550)}>
           <Rows>
+            {log.length === 0 ? (
+              <Txt style={{ fontSize: 15, paddingVertical: 22, textAlign: 'center' }} v="sub">
+                {`Nothing on ${cluster.label} yet.`}
+              </Txt>
+            ) : null}
             {log.map((l, i) => (
               <Animated.View entering={FadeInDown.duration(500)} key={l.id} layout={LinearTransition}>
                 <Pressable
-                  accessibilityRole={l.signature ? 'link' : undefined}
-                  disabled={!l.signature}
-                  onPress={() => l.signature && open(l.signature)}
+                  accessibilityRole={l.signature ? 'link' : 'button'}
+                  // With a transaction: open it in the explorer. Without one: show the whole message.
+                  onPress={() => (l.signature ? open(l.signature) : setExpanded(expanded === l.id ? null : l.id))}
                 >
                   <Row
-                    detail={[timeAgo(l.at), l.at ? l.detail : legacyDetail(l.detail)].filter(Boolean).join(' · ')}
+                    detail={[timeAgo(l.at), plainText(l.at ? l.detail : legacyDetail(l.detail))]
+                      .filter(Boolean)
+                      .join(' · ')}
+                    detailLines={expanded === l.id ? undefined : 2}
                     last={i === log.length - 1}
                     right={<Txt v="num">{l.amount}</Txt>}
                     rightSub={

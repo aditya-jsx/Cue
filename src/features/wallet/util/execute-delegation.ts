@@ -20,6 +20,8 @@ import {
 
 import { clearSessionKey, getOrCreateSessionKey } from '@/features/cue/data-access/session-key'
 import { returnSessionFunds } from '@/features/wallet/util/execute-swap'
+import { $delegations, $triggers, onCluster } from '@/features/price-triggers/data-access/trigger-store'
+import { $voiceAllowance } from '@/features/cue/data-access/voice-allowance'
 import { getTransferSolInstruction } from '@/features/wallet/util/get-transfer-sol-instruction'
 import { sendAndConfirm } from '@/features/wallet/util/send-signed-transaction'
 import {
@@ -246,6 +248,18 @@ export async function executeDelegationGrant({
  * 3. Signs via MWA and confirms on-chain.
  * 4. Clears local session key.
  */
+/**
+ * The session key is shared by every network. Revoking on one must not delete it while another still relies on it
+ * (an allowance, an approval or waiting rules there), or what it holds on that network could never be returned.
+ */
+function keyNeededElsewhere(chain: string): boolean {
+  const otherApprovals = Object.keys($delegations.get()).some((cluster) => cluster !== chain)
+  const otherRules = $triggers.get().some((t) => t.status === 'active' && t.kind === 'buy' && !onCluster(t, chain))
+  const allowance = $voiceAllowance.get()
+  const otherAllowance = allowance !== null && (allowance.cluster ?? 'solana:devnet') !== chain
+  return otherApprovals || otherRules || otherAllowance
+}
+
 export async function executeDelegationRevoke({
   account,
   chain,
@@ -253,6 +267,16 @@ export async function executeDelegationRevoke({
   identity,
 }: ExecuteDelegationRevokeOptions): Promise<string> {
   const ownerAta = await findAtaAddress(account.address, NATIVE_MINT_ADDRESS)
+  // Nothing to close (already closed, or never made on this network): skip the wallet, just collect from the session key.
+  const ataExists = await client.rpc
+    .getAccountInfo(ownerAta, { commitment: 'confirmed', encoding: 'base64' })
+    .send()
+    .then((r) => r.value !== null)
+  if (!ataExists) {
+    await returnSessionFunds({ client, ownerAddress: account.address })
+    if (!keyNeededElsewhere(chain)) await clearSessionKey()
+    return ''
+  }
   let freshBlockhash!: Readonly<{ blockhash: Blockhash; lastValidBlockHeight: bigint }>
 
   const signedTx = await transact(async (wallet) => {
@@ -292,7 +316,7 @@ export async function executeDelegationRevoke({
   // deleting it earlier would strand those funds for good; if returning fails the key is kept so it can be retried.
   try {
     await returnSessionFunds({ client, ownerAddress: account.address })
-    await clearSessionKey()
+    if (!keyNeededElsewhere(chain)) await clearSessionKey()
   } catch (error) {
     console.warn('[CueRevoke] Could not return the session key funds, keeping the key so it can be retried:', error)
   }
