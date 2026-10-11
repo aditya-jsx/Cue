@@ -15,24 +15,37 @@ const KEY = 'cue:voice-allowance'
 export const DEFAULT_ALLOWANCE_SOL = 0.5
 
 /**
- * Whose wallet the allowance is on (background commands act for it) and on which network: an allowance granted on
- * devnet doesn't exist on mainnet. Null when voice approvals are off.
+ * One allowance per network (an allowance granted on devnet doesn't exist on mainnet): whose wallet it's on, since
+ * background commands act for it. A single record from before networks were recorded is devnet's (or the network it
+ * names).
  */
-export const $voiceAllowance = atom<{ cluster?: string; owner: string } | null>(load())
+type Allowance = { owner: string }
+export const $voiceAllowances = atom<Record<string, Allowance>>(load())
 
-function load() {
+function load(): Record<string, Allowance> {
   try {
     const raw = storage.getString(KEY)
-    return raw ? (JSON.parse(raw) as { cluster?: string; owner: string }) : null
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as Record<string, Allowance> | { cluster?: string; owner: string }
+    if (typeof parsed.owner === 'string')
+      return { [String(parsed.cluster ?? 'solana:devnet')]: { owner: parsed.owner } }
+    return parsed as Record<string, Allowance>
   } catch {
-    return null
+    return {}
   }
 }
 
-export function setVoiceAllowance(value: { cluster: string; owner: string } | null) {
-  if (value) storage.set(KEY, JSON.stringify(value))
-  else storage.remove(KEY)
-  $voiceAllowance.set(value)
+/** The allowance on `clusterId` (default: the network in use), or null when voice approvals are off there. */
+export function voiceAllowance(clusterId: string = activeCluster().id): Allowance | null {
+  return $voiceAllowances.get()[clusterId] ?? null
+}
+
+export function setVoiceAllowance(value: Allowance | null, clusterId: string = activeCluster().id) {
+  const next = { ...$voiceAllowances.get() }
+  if (value) next[clusterId] = value
+  else delete next[clusterId]
+  storage.set(KEY, JSON.stringify(next))
+  $voiceAllowances.set(next)
 }
 
 /** What voice approvals can still spend: the approved allowance, minus what waiting buy rules have set aside. */
@@ -43,9 +56,7 @@ export function allowanceLeft(): bigint {
   return left > 0n ? left : 0n
 }
 
-/** On, and on the network the app is using now (allowances from before networks were recorded count as devnet). */
+/** On for the network the app is using now. */
 export function voiceApprovalsOn(): boolean {
-  const allowance = $voiceAllowance.get()
-  if (!allowance || delegatedLamports() === null) return false
-  return (allowance.cluster ?? 'solana:devnet') === activeCluster().id
+  return voiceAllowance() !== null && delegatedLamports() !== null
 }

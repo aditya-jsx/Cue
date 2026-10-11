@@ -44,10 +44,11 @@ import { getSessionKey } from '@/features/cue/data-access/session-key'
 import { type Address, address } from '@solana/kit'
 import { useGetBalance } from '@/features/wallet/data-access/use-get-balance'
 import {
-  $voiceAllowance,
+  $voiceAllowances,
   allowanceLeft,
   DEFAULT_ALLOWANCE_SOL,
   setVoiceAllowance,
+  voiceAllowance,
 } from '@/features/cue/data-access/voice-allowance'
 import { formatError } from '@/features/wallet/util/format-error'
 import CueNative from '../../../modules/cue-native'
@@ -67,7 +68,8 @@ function VoiceApprovalRows({ last }: { last: boolean }) {
   const { account } = useMobileWallet()
   const { client, cluster } = useAppCluster()
   const queryClient = useQueryClient()
-  const allowance = useStore($voiceAllowance)
+  useStore($voiceAllowances)
+  const allowance = voiceAllowance(cluster.id)
   useStore($delegations) // re-render as the allowance is spent
   useStore($triggers)
   const balance = useGetBalance(account!.address).data?.value
@@ -75,18 +77,6 @@ function VoiceApprovalRows({ last }: { last: boolean }) {
   const [amount, setAmount] = useState(String(DEFAULT_ALLOWANCE_SOL))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-
-  if (allowance && (allowance.cluster ?? 'solana:devnet') !== cluster.id) {
-    // Revoking has to happen on the network it was granted on.
-    const where = (allowance.cluster ?? 'solana:devnet') === 'solana:mainnet' ? 'Mainnet' : 'Devnet'
-    return (
-      <Row
-        detail={`Switch to ${where} in Network to use or revoke them`}
-        last={last}
-        title={`Voice approvals on (${where})`}
-      />
-    )
-  }
 
   if (allowance) {
     return (
@@ -119,7 +109,7 @@ function VoiceApprovalRows({ last }: { last: boolean }) {
         wrapAmountLamports: lamports,
       })
       setDelegatedLamports(approve)
-      setVoiceAllowance({ cluster: cluster.id, owner: account.address })
+      setVoiceAllowance({ owner: account.address }, cluster.id)
       pushLogEntry({
         amount: `${sol} SOL`,
         detail: 'Say "approve" instead of signing, up to this much',
@@ -258,7 +248,7 @@ function RevokeButton() {
       ])
       setDelegatedLamports(null)
       // Only this network's voice allowance ended; one on another network is untouched.
-      if (($voiceAllowance.get()?.cluster ?? 'solana:devnet') === cluster.id) setVoiceAllowance(null)
+      setVoiceAllowance(null, cluster.id)
       const stopped = stopBuyTriggers('Permission revoked')
       pushLogEntry({
         amount: '—',
@@ -447,8 +437,7 @@ function LinkRow({ href, label }: { href: '/tools'; label: string }) {
  */
 function networksToRevoke(currentId: string, holdsHere: boolean): string[] {
   const ids = new Set(Object.keys($delegations.get()))
-  const allowance = $voiceAllowance.get()
-  if (allowance) ids.add(allowance.cluster ?? 'solana:devnet')
+  for (const id of Object.keys($voiceAllowances.get())) ids.add(id)
   if (holdsHere) ids.add(currentId)
   return [...ids].map((id) => (id === 'solana:mainnet' ? 'Mainnet' : 'Devnet'))
 }
@@ -485,13 +474,13 @@ export function CueSettings() {
   const { activeTheme } = useTheme()
   const { contacts, wake } = useStore($cue)
   useStore($delegations)
-  const voiceAllowance = useStore($voiceAllowance)
+  useStore($voiceAllowances)
   const { cluster } = useAppCluster()
   const delegated = delegatedLamports(cluster.id)
   const { account: wallet } = useMobileWallet()
   const { data: holdings } = useCueHoldings(wallet?.address)
   const cueHolds = holdings?.total ?? 0n
-  const sameNetworkAllowance = voiceAllowance !== null && (voiceAllowance.cluster ?? 'solana:devnet') === cluster.id
+  const sameNetworkAllowance = voiceAllowance(cluster.id) !== null
   const spoken = useStore($spoken)
   const voice = useStore($voice)
   const buyRules = useStore($triggers).filter(

@@ -21,7 +21,7 @@ import {
 import { clearSessionKey, getOrCreateSessionKey } from '@/features/cue/data-access/session-key'
 import { returnSessionFunds } from '@/features/wallet/util/execute-swap'
 import { $delegations, $triggers, onCluster } from '@/features/price-triggers/data-access/trigger-store'
-import { $voiceAllowance } from '@/features/cue/data-access/voice-allowance'
+import { $voiceAllowances } from '@/features/cue/data-access/voice-allowance'
 import { getTransferSolInstruction } from '@/features/wallet/util/get-transfer-sol-instruction'
 import { sendAndConfirm } from '@/features/wallet/util/send-signed-transaction'
 import {
@@ -255,8 +255,7 @@ export async function executeDelegationGrant({
 function keyNeededElsewhere(chain: string): boolean {
   const otherApprovals = Object.keys($delegations.get()).some((cluster) => cluster !== chain)
   const otherRules = $triggers.get().some((t) => t.status === 'active' && t.kind === 'buy' && !onCluster(t, chain))
-  const allowance = $voiceAllowance.get()
-  const otherAllowance = allowance !== null && (allowance.cluster ?? 'solana:devnet') !== chain
+  const otherAllowance = Object.keys($voiceAllowances.get()).some((cluster) => cluster !== chain)
   return otherApprovals || otherRules || otherAllowance
 }
 

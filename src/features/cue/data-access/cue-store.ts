@@ -5,7 +5,7 @@ import { createMMKV } from 'react-native-mmkv'
 import { activeCluster, activeSolanaClient } from '@/features/cluster/data-access/active-client'
 import { APP_STORAGE_ID } from '@/features/cluster/data-access/create-cluster-props'
 import type { SolanaClient } from '@/features/cluster/data-access/create-solana-client'
-import { $voiceAllowance, allowanceLeft, voiceApprovalsOn } from '@/features/cue/data-access/voice-allowance'
+import { allowanceLeft, voiceAllowance, voiceApprovalsOn } from '@/features/cue/data-access/voice-allowance'
 import { executeAllowanceSend } from '@/features/wallet/util/execute-allowance-send'
 import { ensureMicPermission } from '@/features/cue/util/mic-permission'
 import { speak, speakAndWait, stopSpeaking } from '@/features/cue/util/speech'
@@ -610,7 +610,7 @@ export async function understandOffScreen(wav: string) {
   }
   // Voice approvals, phone unlocked: the whole exchange happens by voice, wherever the user is.
   if (result && plan && canApproveByVoice(plan) && !CueNative.isDeviceLocked()) {
-    await approveByVoice(plan, $voiceAllowance.get()!.owner, activeSolanaClient(), 'notify')
+    await approveByVoice(plan, voiceAllowance()!.owner, activeSolanaClient(), 'notify')
     return
   }
   heardOffScreen = { alreadyHeard: result, at: Date.now(), wav }
