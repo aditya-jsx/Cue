@@ -71,6 +71,7 @@ import CueNative from '../../../modules/cue-native'
 import { executeDelegationGrant } from '@/features/wallet/util/execute-delegation'
 import { executeInstantSend } from '@/features/wallet/util/execute-instant-send'
 import { voiceApprovalsOn } from '@/features/cue/data-access/voice-allowance'
+import { CUE_FEE_BPS, CUE_TREASURY } from '@/features/wallet/util/tokens'
 import { answerQuestion } from '@/features/cue/util/answer'
 import { speak, speakAndWait } from '@/features/cue/util/speech'
 import { spokenApproved, spokenConfirm } from '@/features/cue/util/spoken'
@@ -551,7 +552,21 @@ function Confirm() {
               <KV label="Price now" value={num(formatUsd(plan.priceUsd))} />
               <KV label="Spend" value={num(`$${plan.amountUsd} ≈ ${wsol(plan.amountLamports)}`)} />
               <KV label="Expires" value={val(when(plan.expiresAt))} />
-              <KV label="Permission" last value={val('Needs approval')} />
+              {CUE_TREASURY ? (
+                <KV
+                  label="Cue fee"
+                  value={val(
+                    cluster.id === 'solana:mainnet'
+                      ? `${CUE_FEE_BPS / 100}% ≈ $${((plan.amountUsd * CUE_FEE_BPS) / 10_000).toFixed(3)}`
+                      : `${CUE_FEE_BPS / 100}% on mainnet buys`,
+                  )}
+                />
+              ) : null}
+              <KV
+                label="Permission"
+                last
+                value={val(canApproveByVoice(plan) ? 'From your voice allowance' : 'Needs approval')}
+              />
             </Rows>
           </Animated.View>
         </>

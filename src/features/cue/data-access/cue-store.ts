@@ -18,6 +18,8 @@ import {
   assistantConfigured,
   type Draft,
   draftOf,
+  QuotaReached,
+  quotaMessage,
   setDeviceIdSource,
   understand,
   understandAudio,
@@ -335,10 +337,18 @@ export const flow = {
     const text = normalizeTranscript(raw)
     if (!text) return route(text, nope("I didn't catch that."), null)
     const ticket = ++understanding
-    const { draft, intent } = await understand(
-      raw,
-      $cue.get().contacts.map((c) => c.name),
-    )
+    let understood: Awaited<ReturnType<typeof understand>>
+    try {
+      understood = await understand(
+        raw,
+        $cue.get().contacts.map((c) => c.name),
+      )
+    } catch (error) {
+      if (!(error instanceof QuotaReached)) throw error
+      if (stillListening(ticket)) route(text, nope(quotaMessage(error)), null)
+      return
+    }
+    const { draft, intent } = understood
     const plan = await prepare(intent)
     // Cancelled, or a newer request started, while Claude was thinking: drop this answer.
     if (!stillListening(ticket)) return
@@ -347,7 +357,14 @@ export const flow = {
   /** A recorded clip goes to the assistant, which hears and parses it. Returns false if it couldn't be reached. */
   async finishAudio(wav: string, alreadyHeard?: Heard): Promise<boolean> {
     const ticket = ++understanding
-    const result = alreadyHeard ?? (await hear(wav))
+    let result: Heard | null
+    try {
+      result = alreadyHeard ?? (await hear(wav))
+    } catch (error) {
+      if (!(error instanceof QuotaReached)) throw error
+      if (stillListening(ticket)) route('', nope(quotaMessage(error)), null)
+      return true
+    }
     if (!stillListening(ticket)) return true
     if (!result) return false
     if (!result.transcript) {
@@ -560,7 +577,15 @@ let heardOffScreen: { alreadyHeard: Heard | null; at: number; wav: string } | nu
  * heard (or that nothing was) instead of making the user open the app to find out. Opening it then confirms as usual.
  */
 export async function understandOffScreen(wav: string) {
-  const result = await hear(wav)
+  let result: Heard | null
+  try {
+    result = await hear(wav)
+  } catch (error) {
+    if (!(error instanceof QuotaReached)) throw error
+    CueNative.notify('Daily voice limit reached', quotaMessage(error))
+    speak(quotaMessage(error))
+    return
+  }
   if (result && !result.transcript) {
     CueNative.notify("Cue didn't hear a command", 'Say "Hey Cue" and try again')
     return

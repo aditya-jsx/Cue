@@ -27,7 +27,7 @@ import {
   getTransferTokenInstruction,
   NATIVE_MINT_ADDRESS,
 } from '@/features/wallet/util/spl-token'
-import { BUYABLE_TOKENS } from '@/features/wallet/util/tokens'
+import { BUYABLE_TOKENS, CUE_FEE_BPS, CUE_TREASURY } from '@/features/wallet/util/tokens'
 
 const SLIPPAGE_BPS = 50 // 0.5%
 const ONE_SIGNATURE_FEE = 5_000n // lamports for a one-signer transaction with no priority fee
@@ -122,11 +122,15 @@ export async function executeSwapBuy({
   const token = BUYABLE_TOKENS[symbol]
   if (!token) throw new Error(`Cue can't buy ${symbol} yet.`)
   const sessionKey = await requireSessionKey()
+  // Cue's fee is taken in the token bought (that's how Jupiter's quote counts it) into the treasury's account for that
+  // token, which has to exist: the session key makes it once per token.
+  const feeAccount = CUE_TREASURY ? await findAtaAddress(CUE_TREASURY, token.mint) : null
   const checkedQuote = async () => {
     const quote = await fetchQuote({
       amount: amountLamports,
       inputMint: NATIVE_MINT_ADDRESS,
       outputMint: token.mint,
+      platformFeeBps: feeAccount ? CUE_FEE_BPS : undefined,
       slippageBps: SLIPPAGE_BPS,
     })
     const refusal = checkSwapQuote({ amountLamports, quote, solUsd, tokenDecimals: token.decimals, tokenUsd })
@@ -139,11 +143,27 @@ export async function executeSwapBuy({
   } catch (error) {
     throw new SwapNotStartedError(error instanceof Error ? error.message : String(error), { cause: error })
   }
+  if (feeAccount && CUE_TREASURY) {
+    const exists = await client.rpc
+      .getAccountInfo(feeAccount, { commitment: 'confirmed', encoding: 'base64' })
+      .send()
+      .then((r) => r.value !== null)
+    if (!exists) {
+      await sendAsSessionKey(client, [
+        getCreateAssociatedTokenAccountIdempotentInstruction({
+          associatedToken: feeAccount,
+          mint: token.mint,
+          owner: CUE_TREASURY,
+          payer: sessionKey.address,
+        }),
+      ])
+    }
+  }
   await executeAutonomousAction({ client, ownerAddress, transferLamports: amountLamports }) // step 1
 
   try {
     const quote = await checkedQuote() // a fresh look right before swapping
-    const swap = await fetchSwap({ quote, userPublicKey: sessionKey.address })
+    const swap = await fetchSwap({ feeAccount: feeAccount ?? undefined, quote, userPublicKey: sessionKey.address })
     if (swap.simulationError)
       throw new Error(`Jupiter's test run of the swap failed: ${JSON.stringify(swap.simulationError)}`)
 

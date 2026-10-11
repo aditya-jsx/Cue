@@ -38,11 +38,16 @@ interface StoredClusterState {
 
 const DEFAULT_CLUSTER_ID = 'solana:devnet' as SolanaClusterId
 
+// Cue's own RPC (the parser server forwards to Helius with the key kept server-side), so nobody pastes an RPC key.
+// Without the server configured, devnet falls back to the public endpoint and mainnet starts disabled.
+const CUE_API = process.env.EXPO_PUBLIC_CUE_API_URL
+const cueRpc = (cluster: 'devnet' | 'mainnet') => (CUE_API ? `${CUE_API}/api/rpc?cluster=${cluster}` : '')
+
 export const DEFAULT_CLUSTERS = [
   {
     id: 'solana:devnet' as SolanaClusterId,
     label: 'Devnet',
-    url: 'https://api.devnet.solana.com',
+    url: cueRpc('devnet') || 'https://api.devnet.solana.com',
   },
   {
     id: 'solana:testnet' as SolanaClusterId,
@@ -57,7 +62,7 @@ export const DEFAULT_CLUSTERS = [
   {
     id: 'solana:mainnet' as SolanaClusterId,
     label: 'Mainnet',
-    url: '',
+    url: cueRpc('mainnet'),
   },
 ] as const satisfies readonly Omit<AppCluster, 'isEnabled'>[]
 

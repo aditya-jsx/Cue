@@ -30,22 +30,30 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   }
 }
 
-export function fetchQuote(p: { amount: bigint; inputMint: string; outputMint: string; slippageBps: number }) {
+export function fetchQuote(p: {
+  amount: bigint
+  inputMint: string
+  outputMint: string
+  platformFeeBps?: number // Cue's fee, collected in the input token into the account given to fetchSwap
+  slippageBps: number
+}) {
   const q = new URLSearchParams({
     amount: p.amount.toString(),
     inputMint: p.inputMint,
     outputMint: p.outputMint,
     restrictIntermediateTokens: 'true', // only well-traded hops, so a thin pool can't sit in the middle of the route
     slippageBps: String(p.slippageBps),
+    ...(p.platformFeeBps ? { platformFeeBps: String(p.platformFeeBps) } : {}),
   })
   return request<JupiterQuote>(`${BASE}/quote?${q}`)
 }
 
 /** Builds the swap for `userPublicKey` to sign and send. It spends from the user's own token account (no wrapping). */
-export function fetchSwap(p: { quote: JupiterQuote; userPublicKey: string }) {
+export function fetchSwap(p: { feeAccount?: string; quote: JupiterQuote; userPublicKey: string }) {
   return request<JupiterSwap>(`${BASE}/swap`, {
     body: JSON.stringify({
       dynamicComputeUnitLimit: true,
+      ...(p.feeAccount ? { feeAccount: p.feeAccount } : {}),
       prioritizationFeeLamports: { priorityLevelWithMaxLamports: { maxLamports: 100_000, priorityLevel: 'high' } },
       quoteResponse: p.quote,
       userPublicKey: p.userPublicKey,

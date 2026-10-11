@@ -106,6 +106,32 @@ export const setDeviceIdSource = (source: () => string) => {
   deviceId = source
 }
 
+/** Today's free voice commands are used up (a product limit, not an outage): the app says so instead of falling back. */
+export class QuotaReached extends Error {
+  limit: number
+  retryAfterSec: number
+  constructor(limit: number, retryAfterSec: number) {
+    super('quota')
+    this.limit = limit
+    this.retryAfterSec = retryAfterSec
+  }
+}
+
+async function throwIfQuota(response: Response) {
+  if (response.status !== 429) return
+  const body = (await response.json().catch(() => null)) as {
+    error?: unknown
+    limit?: unknown
+    retryAfterSec?: unknown
+  } | null
+  if (body?.error === 'quota') throw new QuotaReached(Number(body.limit) || 50, Number(body.retryAfterSec) || 0)
+}
+
+export const quotaMessage = (q: QuotaReached) => {
+  const hours = Math.max(1, Math.ceil(q.retryAfterSec / 3600))
+  return `You've used today's ${q.limit} free voice commands. More in about ${hours} hour${hours === 1 ? '' : 's'}; the buttons on Home still work.`
+}
+
 const requestHeaders = () => ({
   'content-type': 'application/json',
   'x-cue-client': CLIENT_TOKEN,
@@ -141,12 +167,14 @@ export async function understand(
       method: 'POST',
       signal: abort.signal,
     })
+    await throwIfQuota(response)
     if (!response.ok) throw new Error(`parse-intent ${response.status}`)
     const body = (await response.json()) as { draft?: unknown }
     const intent = toIntent(body)
     if (!intent) throw new Error('parse-intent returned an unusable intent')
     return { draft: intent.intent === 'unsupported' ? toDraft(body.draft) : draftOf(intent), intent }
   } catch (error) {
+    if (error instanceof QuotaReached) throw error
     console.warn('[CueUnderstand] falling back to the local parser:', error)
     return local()
   } finally {
@@ -172,6 +200,7 @@ export async function understandAudio(
       method: 'POST',
       signal: abort.signal,
     })
+    await throwIfQuota(response)
     if (!response.ok) throw new Error(`parse-intent ${response.status}`)
     const body = (await response.json()) as { draft?: unknown; transcript?: unknown }
     const intent = toIntent(body)
@@ -182,6 +211,7 @@ export async function understandAudio(
       transcript: typeof body.transcript === 'string' ? body.transcript.trim() : '',
     }
   } catch (error) {
+    if (error instanceof QuotaReached) throw error
     console.warn('[CueUnderstand] audio request failed:', error)
     return null
   } finally {
@@ -203,6 +233,7 @@ export async function understandReply(
       method: 'POST',
       signal: abort.signal,
     })
+    await throwIfQuota(response)
     if (!response.ok) throw new Error(`parse-intent ${response.status}`)
     const body = (await response.json()) as { answer?: unknown; transcript?: unknown }
     return {

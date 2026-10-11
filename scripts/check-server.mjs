@@ -30,6 +30,9 @@ try {
         '--rootDir',
         server,
         'api/parse-intent.ts',
+        'api/prices.ts',
+        'api/rpc.ts',
+        'lib/helius.ts',
         'lib/rate-limit.ts',
       ],
       { cwd: server, stdio: 'pipe' },
@@ -66,6 +69,17 @@ try {
   assert.equal(limited.status, 429)
   assert.ok(Number(limited.headers.get('retry-after')) > 0)
   assert.equal((await call({ ...ok, 'x-cue-device': 'anotherdevice0123456789abcdef' })).status, 400) // others unaffected
+
+  // The RPC proxy and price endpoint load too (an extensionless import breaks them the same way), and the proxy
+  // refuses what it should before it ever needs a Helius key.
+  await import(pathToFileURL(join(out, 'api/prices.js')).href)
+  const rpc = (await import(pathToFileURL(join(out, 'api/rpc.js')).href)).POST
+  const rpcCall = (headers, body) =>
+    rpc(new Request('https://x/api/rpc?cluster=devnet', { body: JSON.stringify(body), headers, method: 'POST' }))
+  assert.equal((await rpcCall({}, { method: 'getBalance' })).status, 403) // no token
+  process.env.HELIUS_API_KEY = 'fake'
+  assert.equal((await rpcCall(ok, { id: 1, method: 'requestAirdrop' })).status, 400) // not on the list
+  assert.equal((await rpcCall(ok, [{ method: 'getBalance' }])).status, 400) // no batches
   console.log('server: all checks passed')
 } finally {
   rmSync(out, { force: true, recursive: true })

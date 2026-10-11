@@ -78,11 +78,44 @@ export function identify(headers: Headers): { device?: string; global: string; i
   return { device: DEVICE_ID.test(device) ? device : undefined, global: 'all', ip: ip || undefined }
 }
 
-/** The limits. The per-IP ones are looser (several people share an address) and catch a forged device id. */
-export const rulesFor = (dailyBudget: number): (LimitRule & { by: string })[] => [
+/** Free voice commands per install per day (UTC). Answers to "approve or decline?" don't count. */
+export const FREE_COMMANDS_PER_DAY = 50
+
+/**
+ * The limits. The per-IP ones are looser (several people share an address) and catch a forged device id. `reply`
+ * requests (a one-word approve/decline) still count against the abuse limits but not the free daily quota.
+ */
+export const rulesFor = (dailyBudget: number, reply = false): (LimitRule & { by: string })[] => [
   { by: 'device', max: 20, name: 'device-minute', windowSec: 60 },
-  { by: 'device', max: 400, name: 'device-day', windowSec: 86_400 },
+  ...(reply ? [] : [{ by: 'device', max: FREE_COMMANDS_PER_DAY, name: 'device-quota', windowSec: 86_400 }]),
   { by: 'ip', max: 120, name: 'ip-minute', windowSec: 60 },
   { by: 'ip', max: 2000, name: 'ip-day', windowSec: 86_400 },
   { by: 'global', max: dailyBudget, name: 'budget-day', windowSec: 86_400 }, // a ceiling on the daily bill
+]
+
+/**
+ * The counter store every endpoint shares: Upstash when it is configured (Vercel's Upstash integration sets the KV_*
+ * names), else this instance's memory. `limit` falls back to memory if Upstash is unreachable, so an outage there
+ * loosens the limits instead of taking the endpoint down.
+ */
+const upstashUrl = process.env.UPSTASH_REDIS_REST_URL ?? process.env.KV_REST_API_URL
+const upstashToken = process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.KV_REST_API_TOKEN
+const memory = memoryStore()
+const shared = upstashUrl && upstashToken ? upstashStore(upstashUrl, upstashToken) : memory
+export const countersBackend = shared === memory ? 'memory' : 'upstash'
+
+export function limit(identity: Record<string, string | undefined>, rules: (LimitRule & { by: string })[]) {
+  const ids = Object.fromEntries(Object.entries(identity).filter(([, v]) => v)) as Record<string, string>
+  return checkLimits(shared, ids, rules).catch((error) => {
+    console.warn('[rate-limit] counter store failed, counting in memory', String(error))
+    return checkLimits(memory, ids, rules)
+  })
+}
+
+/** RPC proxy limits: generous for one phone, but a hard daily ceiling keeps the Helius bill inside the free tier. */
+export const rpcRules: (LimitRule & { by: string })[] = [
+  { by: 'device', max: 240, name: 'rpc-device-minute', windowSec: 60 },
+  { by: 'device', max: 5000, name: 'rpc-device-day', windowSec: 86_400 },
+  { by: 'ip', max: 1200, name: 'rpc-ip-minute', windowSec: 60 },
+  { by: 'global', max: 30_000, name: 'rpc-budget-day', windowSec: 86_400 },
 ]

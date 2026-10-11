@@ -72,4 +72,23 @@ const ids = { device: 'a'.repeat(20) }
   assert.equal(identify(h({})).ip, undefined)
 }
 
+// The free daily quota: 50 commands per device; approve/decline answers don't use it up.
+const quota = rulesFor(5000).find((r) => r.name === 'device-quota')
+assert.equal(quota?.max, 50)
+assert.equal(
+  rulesFor(5000, true).some((r) => r.name === 'device-quota'),
+  false,
+)
+{
+  const store = memoryStore(() => T)
+  const id = { device: 'q'.repeat(20) }
+  const verdicts = []
+  for (let i = 0; i < 51; i++) verdicts.push(await checkLimits(store, id, [quota], T + i * 2000))
+  assert.equal(
+    verdicts.slice(0, 50).every((v) => v.ok),
+    true,
+  )
+  assert.equal(verdicts[50].rule, 'device-quota')
+}
+
 console.log('rate-limit: all checks passed')

@@ -1,6 +1,6 @@
 import { ApiError, GoogleGenAI, ThinkingLevel } from '@google/genai'
 
-import { checkLimits, identify, memoryStore, rulesFor, upstashStore } from '../lib/rate-limit.js'
+import { FREE_COMMANDS_PER_DAY, identify, limit, rulesFor } from '../lib/rate-limit.js'
 
 // Turns a spoken wallet command into Cue's intent JSON. The command arrives as an audio clip (Gemini does the
 // hearing) or as text (suggestion chips, or a transcript from the offline fallback). Only parses: the app
@@ -141,11 +141,6 @@ const strings = (value: unknown, max: number) =>
         .slice(0, max)
     : []
 
-// Rate-limit counters live in Upstash Redis when it is configured (shared by every instance), else in memory.
-const upstashUrl = process.env.UPSTASH_REDIS_REST_URL ?? process.env.KV_REST_API_URL
-const upstashToken = process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.KV_REST_API_TOKEN
-const memory = memoryStore()
-const counters = upstashUrl && upstashToken ? upstashStore(upstashUrl, upstashToken) : memory
 const MAX_BODY_BYTES = 2_000_000
 const NO_STORE = { 'cache-control': 'no-store' }
 
@@ -156,17 +151,6 @@ export async function POST(request: Request): Promise<Response> {
   if (token && request.headers.get('x-cue-client') !== token) return new Response('Forbidden', { status: 403 })
 
   if (Number(request.headers.get('content-length')) > MAX_BODY_BYTES) return new Response('Too large', { status: 413 })
-  const identity = identify(request.headers)
-  const rules = rulesFor(Number(process.env.CUE_DAILY_BUDGET) || 5000)
-  const verdict = await checkLimits(counters, identity, rules).catch((error) => {
-    console.warn('[parse-intent] rate-limit store failed, counting in memory', String(error))
-    return checkLimits(memory, identity, rules)
-  })
-  if (!verdict.ok) {
-    console.warn('[parse-intent] rate limited', verdict.rule)
-    return new Response('Slow down', { headers: { 'retry-after': String(verdict.retryAfterSec) }, status: 429 })
-  }
-
   const body = (await request.json().catch(() => null)) as {
     audio?: unknown
     contacts?: unknown
@@ -180,7 +164,6 @@ export async function POST(request: Request): Promise<Response> {
   const audio = typeof body?.audio === 'string' && body.audio.length < 1_500_000 ? body.audio : ''
   const mimeType = body?.mimeType === 'audio/mp4' || body?.mimeType === 'audio/aac' ? body.mimeType : 'audio/wav'
   const text = typeof body?.text === 'string' ? body.text.trim().slice(0, 500) : ''
-  if (!audio && !text) return new Response('Missing audio or text', { status: 400 })
   const contacts = strings(body?.contacts, 50)
   const tokens = strings(body?.tokens, 20)
   const heard = typeof body?.heard === 'string' ? body.heard.trim().slice(0, 500) : ''
@@ -199,6 +182,22 @@ export async function POST(request: Request): Promise<Response> {
     : `${context}\nCommand: ${JSON.stringify(text)}${heard && heard !== text ? `\nRaw speech recognition: ${JSON.stringify(heard)}` : ''}`
 
   const reply = body?.mode === 'reply' && Boolean(audio)
+  const identity = identify(request.headers)
+  const rules = rulesFor(Number(process.env.CUE_DAILY_BUDGET) || 5000, reply)
+  const verdict = await limit(identity, rules)
+  if (!verdict.ok) {
+    console.warn('[parse-intent] rate limited', verdict.rule)
+    const headers = { 'retry-after': String(verdict.retryAfterSec) }
+    // The free daily quota is a product limit, not abuse: say so, so the app can tell the user kindly.
+    if (verdict.rule === 'device-quota') {
+      return Response.json(
+        { error: 'quota', limit: FREE_COMMANDS_PER_DAY, retryAfterSec: verdict.retryAfterSec },
+        { headers, status: 429 },
+      )
+    }
+    return new Response('Slow down', { headers, status: 429 })
+  }
+  if (!audio && !text) return new Response('Missing audio or text', { status: 400 })
   const config = {
     responseJsonSchema: reply ? REPLY_SCHEMA : SCHEMA,
     responseMimeType: 'application/json',

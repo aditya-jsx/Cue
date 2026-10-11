@@ -6,6 +6,8 @@ import { parsePriceUpdateV2 } from './parse-price-update-v2.ts'
 
 /** Reads Pyth's sponsored on-chain price accounts directly via RPC (and Jupiter for the rest) into the price store. */
 export async function fetchPrices(client: SolanaClient): Promise<void> {
+  // Cue's server reads the prices once for every phone; reading the chain here is the fallback when it can't be reached.
+  if (await fetchFromCue().catch((error) => (console.warn('[CuePriceEngine] Cue prices failed:', error), false))) return
   const entries = Object.entries(PRICE_FEED_ACCOUNTS) as [Symbol, string][]
 
   await Promise.all([
@@ -24,6 +26,24 @@ export async function fetchPrices(client: SolanaClient): Promise<void> {
       setPrice(symbol, parsePriceUpdateV2(bytes))
     }),
   ])
+}
+
+const CUE_API = process.env.EXPO_PUBLIC_CUE_API_URL
+
+/** True when Cue's server answered with prices (they're in the store then). */
+async function fetchFromCue(): Promise<boolean> {
+  if (!CUE_API) return false
+  const response = await fetch(`${CUE_API}/api/prices`)
+  if (!response.ok) throw new Error(`HTTP ${response.status}`)
+  const { prices } = (await response.json()) as { prices?: Record<string, { publishTimeMs?: unknown; usd?: unknown }> }
+  let any = false
+  for (const [symbol, point] of Object.entries(prices ?? {})) {
+    if (typeof point.usd === 'number' && point.usd > 0 && typeof point.publishTimeMs === 'number') {
+      setPrice(symbol as Symbol, { publishTimeMs: point.publishTimeMs, usd: point.usd })
+      any = true
+    }
+  }
+  return any
 }
 
 async function fetchJupiterPrices() {

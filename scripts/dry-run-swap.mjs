@@ -95,4 +95,33 @@ console.log('SKR safety check:', skrRefusal ?? 'passes')
 assert.equal(skrRefusal, null, 'a normal live SKR quote should pass the safety check')
 const skrSwap = await fetchSwap({ quote: skrQuote, userPublicKey: throwaway.address })
 assert.ok(skrSwap.swapTransaction, 'Jupiter built the SKR swap')
+
+// Cue's 0.5% fee (TREASURY=<address> node scripts/dry-run-swap.mjs): Jupiter takes it in the token bought, into the
+// treasury's account for that token (which has to exist before a real swap).
+if (process.env.TREASURY) {
+  const { address, getAddressEncoder, getProgramDerivedAddress } = await import('@solana/kit')
+  const enc = getAddressEncoder()
+  const [feeAccount] = await getProgramDerivedAddress({
+    programAddress: address('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL'),
+    seeds: [
+      enc.encode(address(process.env.TREASURY)),
+      enc.encode(address('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')),
+      enc.encode(address(JUP_MINT)),
+    ],
+  })
+  const feeQuote = await fetchQuote({
+    amount: amountLamports,
+    inputMint: SOL_MINT,
+    outputMint: JUP_MINT,
+    platformFeeBps: 50,
+    slippageBps: 50,
+  })
+  console.log(
+    `Fee quote: platformFee ${JSON.stringify(feeQuote.platformFee)}, out ${Number(feeQuote.outAmount) / 1e6} JUP (vs ${Number(quote.outAmount) / 1e6} without)`,
+  )
+  assert.equal(Number(feeQuote.platformFee?.feeBps), 50, 'Jupiter applied the 0.5% fee')
+  const feeSwap = await fetchSwap({ feeAccount, quote: feeQuote, userPublicKey: throwaway.address })
+  assert.ok(feeSwap.swapTransaction, 'Jupiter built the swap with the fee account')
+  console.log(`Fee swap built, fee account ${feeAccount}`)
+}
 console.log('dry-run-swap: all checks passed')
