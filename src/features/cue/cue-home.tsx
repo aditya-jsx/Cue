@@ -23,6 +23,7 @@ import {
 import {
   $delegations,
   $triggers,
+  activeBuyLamports,
   cancelTrigger,
   describeTrigger,
   onCluster,
@@ -86,7 +87,6 @@ export function CueHome() {
   useStore($delegations) // ...or spent from
   useStore($triggers)
   const voiceOn = voiceApprovalsOn()
-  const solLeft = Number((Number(allowanceLeft()) / 1e9).toFixed(4)).toString()
   useAnswerQuestions(account!.address)
   const address = account!.address.toString()
   // Everything that's the user's: plain SOL, SOL set aside for Cue in their own account, and what Cue's key holds.
@@ -96,6 +96,11 @@ export function CueHome() {
     queryKey: ['get-balance', 'total', cluster.id, address],
   })
   const value = balance.data?.total
+  // What Cue can spend, as the latest chain read says (the stored count only until that arrives): a refresh always
+  // shows the real approval, even if a read right after granting it came back from a node a moment behind.
+  const onChain = balance.data ? balance.data.approved - activeBuyLamports(cluster.id) : null
+  const left = onChain === null ? allowanceLeft() : onChain > 0n ? onChain : 0n
+  const solLeft = Number((Number(left) / 1e9).toFixed(4)).toString()
   // The user's Seeker name, shown beside (never instead of) the address: anyone can send a name to any wallet.
   const { data: skrName, refetch: refetchSkrName } = useQuery({
     queryFn: () => skrNamesOf(mainnetRpc, account!.address).then((names) => names[0] ?? null),

@@ -48,6 +48,7 @@ import {
   allowanceLeft,
   DEFAULT_ALLOWANCE_SOL,
   setVoiceAllowance,
+  solOnChain,
   voiceAllowance,
   wsolHeld,
 } from '@/features/cue/data-access/voice-allowance'
@@ -99,8 +100,10 @@ function VoiceApprovalRows({ last }: { last: boolean }) {
     setError(null)
     try {
       const lamports = BigInt(Math.round(sol * LAMPORTS))
-      // The approval covers buy rules already waiting too: a new approval replaces the old one.
-      const approve = lamports + activeBuyLamports()
+      // A new approval replaces the old one, so it covers what was already approved (which includes waiting buy
+      // rules) plus this; with nothing approved yet, buy rules already waiting plus this.
+      const { approved } = await solOnChain(client, account.address)
+      const approve = lamports + (approved > 0n ? approved : activeBuyLamports())
       const result = await executeDelegationGrant({
         account,
         approveAmountLamports: approve,
@@ -171,7 +174,7 @@ function VoiceApprovalRows({ last }: { last: boolean }) {
       ) : null}
       <View style={{ marginTop: 14 }}>
         <CueButton
-          label="Turn on"
+          label={allowance ? 'Add to allowance' : 'Turn on'}
           loading={busy}
           loadingLabel="Waiting for your wallet"
           onPress={() => void turnOn()}
