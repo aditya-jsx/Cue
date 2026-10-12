@@ -78,8 +78,11 @@ export function identify(headers: Headers): { device?: string; global: string; i
   return { device: DEVICE_ID.test(device) ? device : undefined, global: 'all', ip: ip || undefined }
 }
 
-/** Free voice commands per install per day (UTC). Answers to "approve or decline?" don't count. */
-export const FREE_COMMANDS_PER_DAY = 50
+/**
+ * Free voice commands per install per day (UTC). Answers to "approve or decline?" don't count. FREE_COMMANDS_PER_DAY in
+ * the environment overrides it (e.g. raised for a demo day) without a code change.
+ */
+export const FREE_COMMANDS_PER_DAY = Number(process.env.FREE_COMMANDS_PER_DAY) || 50
 
 /**
  * The limits. The per-IP ones are looser (several people share an address) and catch a forged device id. `reply`
