@@ -2,6 +2,7 @@ import Ionicons from '@expo/vector-icons/Ionicons'
 import { useStore } from '@nanostores/react'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
 import {
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -498,7 +499,7 @@ function Confirm() {
     setSwapping(true)
     setError(null)
     try {
-      const { outAmount, signature } = await executeWalletSwap({
+      const { note, outAmount, signature } = await executeWalletSwap({
         account,
         amount: BigInt(Math.round(plan.amount * 10 ** decimalsOf(plan.from))),
         chain: cluster.id,
@@ -519,6 +520,7 @@ function Confirm() {
       })
       refreshWallet()
       flow.signed(signature)
+      if (note) Alert.alert('Voice approvals', note)
     } catch (e) {
       setError(formatError(e))
     } finally {

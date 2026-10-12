@@ -1,12 +1,31 @@
 import { transact } from '@solana-mobile/mobile-wallet-adapter-protocol-kit'
 import type { Account, AppIdentity } from '@wallet-ui/react-native-kit'
-import { type Address, getBase64Encoder, getTransactionDecoder } from '@solana/kit'
+import {
+  type Address,
+  appendTransactionMessageInstructions,
+  compileTransaction,
+  createTransactionMessage,
+  getBase64Encoder,
+  getTransactionDecoder,
+  pipe,
+  setTransactionMessageFeePayer,
+  setTransactionMessageLifetimeUsingBlockhash,
+} from '@solana/kit'
 
 import type { SolanaClient } from '@/features/cluster/data-access/create-solana-client'
 import { fetchQuote, fetchSwap } from '@/features/wallet/util/jupiter'
 import { withWholeLamportPriority } from '@/features/wallet/util/whole-lamport-priority'
 import { sendAndConfirm } from '@/features/wallet/util/send-signed-transaction'
-import { findAtaAddress, NATIVE_MINT_ADDRESS } from '@/features/wallet/util/spl-token'
+import { getSessionKey } from '@/features/cue/data-access/session-key'
+import { solOnChain } from '@/features/cue/data-access/voice-allowance'
+import { getTransferSolInstruction } from '@/features/wallet/util/get-transfer-sol-instruction'
+import {
+  findAtaAddress,
+  getApproveInstruction,
+  getCreateAssociatedTokenAccountIdempotentInstruction,
+  getSyncNativeInstruction,
+  NATIVE_MINT_ADDRESS,
+} from '@/features/wallet/util/spl-token'
 import { CUE_FEE_BPS, CUE_TREASURY } from '@/features/wallet/util/tokens'
 
 const SLIPPAGE_BPS = 50
@@ -25,6 +44,41 @@ async function feeAccountFor(client: SolanaClient, inputMint: Address, outputMin
     if (exists) return ata
   }
   return undefined
+}
+
+/**
+ * Cue's voice allowance is wrapped SOL in the wallet's own wrapped-SOL account, approved for Cue's key. A swap in or out
+ * of SOL ends by closing that account (Jupiter's unwrap), which hands the SOL back but silently ends the allowance. This
+ * builds a second transaction that puts it back as it was: the same SOL wrapped again, the same amount approved again.
+ */
+async function keepAllowance(client: SolanaClient, owner: Address) {
+  const key = await getSessionKey()
+  if (!key) return null
+  const { approved, wrapped } = await solOnChain(client, owner)
+  if (approved === 0n) return null
+  const ata = await findAtaAddress(owner, NATIVE_MINT_ADDRESS)
+  const { value: blockhash } = await client.rpc.getLatestBlockhash({ commitment: 'confirmed' }).send()
+  const message = pipe(
+    createTransactionMessage({ version: 0 }),
+    (m) => setTransactionMessageFeePayer(owner, m),
+    (m) => setTransactionMessageLifetimeUsingBlockhash(blockhash, m),
+    (m) =>
+      appendTransactionMessageInstructions(
+        [
+          getCreateAssociatedTokenAccountIdempotentInstruction({
+            associatedToken: ata,
+            mint: NATIVE_MINT_ADDRESS,
+            owner,
+            payer: owner,
+          }),
+          getTransferSolInstruction({ amount: wrapped, destination: ata, source: owner }),
+          getSyncNativeInstruction({ account: ata }),
+          getApproveInstruction({ amount: approved, delegate: key.address, owner, source: ata }),
+        ],
+        m,
+      ),
+  )
+  return { lastValidBlockHeight: blockhash.lastValidBlockHeight, transaction: compileTransaction(message) }
 }
 
 /**
@@ -68,7 +122,7 @@ export async function executeWalletSwap({
   identity: AppIdentity
   inputMint: Address
   outputMint: Address
-}): Promise<{ outAmount: bigint; signature: string }> {
+}): Promise<{ note?: string; outAmount: bigint; signature: string }> {
   // Enough to swap? Asked before Phantom opens, in plain words rather than Jupiter's error code.
   const held =
     inputMint === NATIVE_MINT_ADDRESS
@@ -78,11 +132,21 @@ export async function executeWalletSwap({
           .then((r) => r.value)
       : await tokenBalance(client, account.address, inputMint)
   const reserve = inputMint === NATIVE_MINT_ADDRESS ? SOL_FEE_RESERVE : 0n
-  if (held < amount + reserve) throw new Error(notEnough(held, amount, inputDecimals, inputSymbol, reserve > 0n))
+  if (held < amount + reserve) {
+    const message = notEnough(held, amount, inputDecimals, inputSymbol, reserve > 0n)
+    // The Home balance counts SOL set aside for Cue too; say why it can't be swapped.
+    const setAside = inputMint === NATIVE_MINT_ADDRESS ? (await solOnChain(client, account.address)).wrapped : 0n
+    throw new Error(
+      setAside > 0n
+        ? `${message} Another ${Number((Number(setAside) / 1e9).toFixed(4))} SOL is set aside for Cue's voice approvals; Revoke in Settings frees it.`
+        : message,
+    )
+  }
   const feeAccount = await feeAccountFor(client, inputMint, outputMint)
   let lastValidBlockHeight = 0n
   let outAmount = 0n
-  const signed = await transact(async (wallet) => {
+  let restore: Awaited<ReturnType<typeof keepAllowance>> = null
+  const [signed, signedRestore] = await transact(async (wallet) => {
     await wallet.authorize({ chain, identity })
     const quote = await fetchQuote({
       amount,
@@ -105,9 +169,22 @@ export async function executeWalletSwap({
     const unsigned = withWholeLamportPriority(
       getTransactionDecoder().decode(getBase64Encoder().encode(swap.swapTransaction)),
     )
-    const [tx] = await wallet.signTransactions({ transactions: [unsigned] })
-    return tx
+    const touchesSol = inputMint === NATIVE_MINT_ADDRESS || outputMint === NATIVE_MINT_ADDRESS
+    restore = touchesSol ? await keepAllowance(client, account.address) : null
+    // One approval in Phantom for both; the second is only sent once the swap has gone through.
+    return wallet.signTransactions({ transactions: restore ? [unsigned, restore.transaction] : [unsigned] })
   })
   const signature = await sendAndConfirm({ client, lastValidBlockHeight, transaction: signed })
-  return { outAmount, signature }
+  const kept = restore as Awaited<ReturnType<typeof keepAllowance>> // set inside the wallet session above
+  if (!kept || !signedRestore) return { outAmount, signature }
+  try {
+    await sendAndConfirm({ client, lastValidBlockHeight: kept.lastValidBlockHeight, transaction: signedRestore })
+    return { outAmount, signature }
+  } catch {
+    return {
+      note: "The swap went through, but Cue's voice allowance couldn't be put back. The SOL is in your wallet; turn voice approvals on again in Settings.",
+      outAmount,
+      signature,
+    }
+  }
 }
