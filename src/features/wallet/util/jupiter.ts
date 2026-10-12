@@ -47,8 +47,13 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   throw last ?? new Error('Jupiter did not answer.')
 }
 
+/** The exchanges a quote's route goes through, by Jupiter's label (e.g. "Meteora", "Whirlpool"). */
+export const routeDexes = (quote: JupiterQuote) =>
+  ((quote.routePlan ?? []) as { swapInfo?: { label?: string } }[]).flatMap((r) => r.swapInfo?.label ?? [])
+
 export function fetchQuote(p: {
   amount: bigint
+  excludeDexes?: string[] // route around these exchanges, e.g. after a route through them failed Jupiter's test run
   inputMint: string
   outputMint: string
   platformFeeBps?: number // Cue's fee, collected in the input token into the account given to fetchSwap
@@ -61,6 +66,7 @@ export function fetchQuote(p: {
     restrictIntermediateTokens: 'true', // only well-traded hops, so a thin pool can't sit in the middle of the route
     slippageBps: String(p.slippageBps),
     ...(p.platformFeeBps ? { platformFeeBps: String(p.platformFeeBps) } : {}),
+    ...(p.excludeDexes?.length ? { excludeDexes: p.excludeDexes.join(',') } : {}),
   })
   return request<JupiterQuote>(`${BASE}/quote?${q}`)
 }

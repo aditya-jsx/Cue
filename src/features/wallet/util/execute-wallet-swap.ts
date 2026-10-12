@@ -13,7 +13,7 @@ import {
 } from '@solana/kit'
 
 import type { SolanaClient } from '@/features/cluster/data-access/create-solana-client'
-import { fetchQuote, fetchSwap } from '@/features/wallet/util/jupiter'
+import { fetchQuote, fetchSwap, routeDexes } from '@/features/wallet/util/jupiter'
 import { withWholeLamportPriority } from '@/features/wallet/util/whole-lamport-priority'
 import { sendAndConfirm } from '@/features/wallet/util/send-signed-transaction'
 import { getSessionKey } from '@/features/cue/data-access/session-key'
@@ -148,14 +148,24 @@ export async function executeWalletSwap({
   let restore: Awaited<ReturnType<typeof keepAllowance>> = null
   const [signed, signedRestore] = await transact(async (wallet) => {
     await wallet.authorize({ chain, identity })
-    const quote = await fetchQuote({
-      amount,
-      inputMint,
-      outputMint,
-      platformFeeBps: feeAccount ? CUE_FEE_BPS : undefined,
-      slippageBps: SLIPPAGE_BPS,
-    })
-    const swap = await fetchSwap({ feeAccount, quote, userPublicKey: account.address, wrapAndUnwrapSol: true })
+    const build = async (excludeDexes?: string[]) => {
+      const quote = await fetchQuote({
+        amount,
+        excludeDexes,
+        inputMint,
+        outputMint,
+        platformFeeBps: feeAccount ? CUE_FEE_BPS : undefined,
+        slippageBps: SLIPPAGE_BPS,
+      })
+      const swap = await fetchSwap({ feeAccount, quote, userPublicKey: account.address, wrapAndUnwrapSol: true })
+      return { quote, swap }
+    }
+    let { quote, swap } = await build()
+    // Jupiter's router sometimes picks a pool that no longer trades ("Pool disabled"): ask once for a route that avoids
+    // the exchanges the failed one went through. Not for a shortfall, which no other route fixes.
+    if (swap.simulationError && !/insufficient|debit an account|0x1\b/i.test(JSON.stringify(swap.simulationError))) {
+      ;({ quote, swap } = await build(routeDexes(quote)))
+    }
     if (swap.simulationError) {
       const detail = JSON.stringify(swap.simulationError)
       throw new Error(
