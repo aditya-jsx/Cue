@@ -41,7 +41,7 @@ import { setTheme, type Theme, useTheme } from '@/features/shell/data-access/use
 import { executeDelegationGrant, executeDelegationRevoke } from '@/features/wallet/util/execute-delegation'
 import { findAtaAddress, NATIVE_MINT_ADDRESS } from '@/features/wallet/util/spl-token'
 import { getSessionKey } from '@/features/cue/data-access/session-key'
-import { type Address, address } from '@solana/kit'
+import { address } from '@solana/kit'
 import { useGetBalance } from '@/features/wallet/data-access/use-get-balance'
 import {
   $voiceAllowances,
@@ -49,6 +49,7 @@ import {
   DEFAULT_ALLOWANCE_SOL,
   setVoiceAllowance,
   voiceAllowance,
+  wsolHeld,
 } from '@/features/cue/data-access/voice-allowance'
 import { formatError } from '@/features/wallet/util/format-error'
 import CueNative from '../../../modules/cue-native'
@@ -211,15 +212,6 @@ function useCueHoldings(owner: string | undefined) {
     queryKey: ['cue-holdings', cluster.id, owner],
     staleTime: 15_000,
   })
-}
-
-async function wsolHeld(client: ReturnType<typeof useAppCluster>['client'], holder: Address) {
-  const ata = await findAtaAddress(holder, NATIVE_MINT_ADDRESS)
-  return client.rpc
-    .getTokenAccountBalance(ata, { commitment: 'confirmed' })
-    .send()
-    .then((r) => BigInt(r.value.amount))
-    .catch(() => 0n) // no account means nothing held
 }
 
 function RevokeButton() {

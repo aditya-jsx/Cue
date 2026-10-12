@@ -5,7 +5,12 @@ import { createMMKV } from 'react-native-mmkv'
 import { activeCluster, activeSolanaClient } from '@/features/cluster/data-access/active-client'
 import { APP_STORAGE_ID } from '@/features/cluster/data-access/create-cluster-props'
 import type { SolanaClient } from '@/features/cluster/data-access/create-solana-client'
-import { allowanceLeft, voiceAllowance, voiceApprovalsOn } from '@/features/cue/data-access/voice-allowance'
+import {
+  allowanceLeft,
+  syncAllowance,
+  voiceAllowance,
+  voiceApprovalsOn,
+} from '@/features/cue/data-access/voice-allowance'
 import { executeAllowanceSend } from '@/features/wallet/util/execute-allowance-send'
 import { fetchQuote } from '@/features/wallet/util/jupiter'
 import { NATIVE_MINT_ADDRESS } from '@/features/wallet/util/spl-token'
@@ -454,6 +459,7 @@ export const flow = {
   /** A recorded clip goes to the assistant, which hears and parses it. Returns false if it couldn't be reached. */
   async finishAudio(wav: string, alreadyHeard?: Heard): Promise<boolean> {
     const ticket = ++understanding
+    const synced = syncAllowanceQuietly() // alongside the assistant, so whether voice can approve is up to date
     let result: Heard | null
     try {
       result = alreadyHeard ?? (await hear(wav))
@@ -470,6 +476,7 @@ export const flow = {
       else route('', nope("I didn't catch that."), null)
       return true
     }
+    await synced
     const plan = await prepare(result.intent)
     if (!stillListening(ticket)) return true
     route(result.transcript, plan, result.draft)
@@ -674,6 +681,7 @@ let heardOffScreen: { alreadyHeard: Heard | null; at: number; wav: string } | nu
  * heard (or that nothing was) instead of making the user open the app to find out. Opening it then confirms as usual.
  */
 export async function understandOffScreen(wav: string) {
+  const synced = syncAllowanceQuietly()
   let result: Heard | null
   try {
     result = await hear(wav)
@@ -687,6 +695,7 @@ export async function understandOffScreen(wav: string) {
     CueNative.notify("Cue didn't hear a command", 'Say "Hey Cue" and try again')
     return
   }
+  await synced
   const plan = result ? await prepare(result.intent) : null
   if (result && plan?.kind === 'nope') {
     // Same as in the app: say what's wrong, no "tap to review".
@@ -717,6 +726,9 @@ export async function understandOffScreen(wav: string) {
 // Registered once for the app's whole process, not by a screen: the screen goes away when the app is swiped from recents
 // while the process (and "Hey Cue") lives on. The native side only hands commands over while this is listening.
 CueNative.addListener('onBackgroundCommand', ({ wav }) => void understandOffScreen(wav).catch((e) => console.warn(e)))
+
+/** Best effort: unreachable chain or no allowance leaves the last known count. */
+const syncAllowanceQuietly = () => syncAllowance(activeSolanaClient()).catch(() => null)
 
 /** The command heard off screen, once, if still fresh. */
 export function takeHeardOffScreen() {

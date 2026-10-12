@@ -1,9 +1,18 @@
 import { atom } from 'nanostores'
 import { createMMKV } from 'react-native-mmkv'
 
+import { type Address, address } from '@solana/kit'
+
 import { activeCluster } from '@/features/cluster/data-access/active-client'
 import { APP_STORAGE_ID } from '@/features/cluster/data-access/create-cluster-props'
-import { activeBuyLamports, delegatedLamports } from '@/features/price-triggers/data-access/trigger-store'
+import type { SolanaClient } from '@/features/cluster/data-access/create-solana-client'
+import { getSessionKey } from '@/features/cue/data-access/session-key'
+import {
+  activeBuyLamports,
+  delegatedLamports,
+  setDelegatedLamports,
+} from '@/features/price-triggers/data-access/trigger-store'
+import { findAtaAddress, NATIVE_MINT_ADDRESS } from '@/features/wallet/util/spl-token'
 
 /**
  * Voice approvals: the user sets aside an allowance once (one wallet signature: wrap SOL, approve Cue's session key
@@ -59,4 +68,65 @@ export function allowanceLeft(): bigint {
 /** On for the network the app is using now. */
 export function voiceApprovalsOn(): boolean {
   return voiceAllowance() !== null && delegatedLamports() !== null
+}
+
+/** Wrapped SOL `holder` has in its own wrapped-SOL account (0 when it has none). */
+export async function wsolHeld(client: SolanaClient, holder: Address): Promise<bigint> {
+  const ata = await findAtaAddress(holder, NATIVE_MINT_ADDRESS)
+  return client.rpc
+    .getTokenAccountBalance(ata, { commitment: 'confirmed' })
+    .send()
+    .then((r) => BigInt(r.value.amount))
+    .catch(() => 0n) // no account means nothing held
+}
+
+type ParsedTokenAccount = { delegate?: string; delegatedAmount?: { amount: string }; tokenAmount: { amount: string } }
+
+/**
+ * The wallet's SOL as the chain has it, all of it the user's: plain SOL, the wrapped SOL set aside for Cue in their own
+ * account (`approved` of it spendable by Cue's key), and what Cue's key holds for them (fees, a buy in progress).
+ */
+export async function solOnChain(client: SolanaClient, owner: string) {
+  const key = await getSessionKey()
+  const ownerWsol = await findAtaAddress(address(owner), NATIVE_MINT_ADDRESS)
+  const [plain, wrappedAccount, keySol, keyWsol] = await Promise.all([
+    client.rpc
+      .getBalance(address(owner), { commitment: 'confirmed' })
+      .send()
+      .then((r) => r.value),
+    client.rpc
+      .getAccountInfo(ownerWsol, { commitment: 'confirmed', encoding: 'jsonParsed' })
+      .send()
+      .then((r) => (r.value?.data as { parsed?: { info?: ParsedTokenAccount } } | undefined)?.parsed?.info ?? null),
+    key
+      ? client.rpc
+          .getBalance(key.address, { commitment: 'confirmed' })
+          .send()
+          .then((r) => r.value)
+      : 0n,
+    key ? wsolHeld(client, key.address) : 0n,
+  ])
+  const wrapped = BigInt(wrappedAccount?.tokenAmount.amount ?? 0)
+  const delegated =
+    key && wrappedAccount?.delegate === key.address ? BigInt(wrappedAccount.delegatedAmount?.amount ?? 0) : 0n
+  const approved = delegated < wrapped ? delegated : wrapped
+  return { approved, cueHolds: keySol + keyWsol, plain, total: plain + wrapped + keySol + keyWsol, wrapped }
+}
+
+/**
+ * Reads `owner`'s SOL from the chain and sets what Cue may spend to what it says, so the app's own count can't drift
+ * from the real approval. Only while voice approvals are on for that wallet: turning them on or off stays the user's
+ * choice in Settings.
+ */
+export async function syncAllowance(
+  client: SolanaClient,
+  owner: string | undefined = voiceAllowance()?.owner,
+  clusterId: string = activeCluster().id,
+) {
+  if (!owner) return null
+  const sol = await solOnChain(client, owner)
+  if (voiceAllowance(clusterId)?.owner === owner && delegatedLamports(clusterId) !== null) {
+    setDelegatedLamports(sol.approved, clusterId)
+  }
+  return sol
 }

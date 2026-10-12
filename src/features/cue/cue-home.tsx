@@ -14,7 +14,12 @@ import { $homeNotice, $question, answerAloud, flow, SUGGESTIONS } from '@/featur
 import { tokenHoldings } from '@/features/cue/util/answer'
 import { $prices } from '@/features/prices/data-access/price-store'
 import { mainnetRpc, skrNamesOf } from '@/features/cue/data-access/skr'
-import { $voiceAllowances, allowanceLeft, voiceApprovalsOn } from '@/features/cue/data-access/voice-allowance'
+import {
+  $voiceAllowances,
+  allowanceLeft,
+  syncAllowance,
+  voiceApprovalsOn,
+} from '@/features/cue/data-access/voice-allowance'
 import {
   $delegations,
   $triggers,
@@ -24,7 +29,6 @@ import {
 } from '@/features/price-triggers/data-access/trigger-store'
 import { useCue } from '@/features/cue/cue-theme'
 import { CuePage, Glass, Press, Ring, Row, Rows, SectionLabel, Txt } from '@/features/cue/ui/cue-ui'
-import { useGetBalance } from '@/features/wallet/data-access/use-get-balance'
 
 const LAMPORTS = 1_000_000_000n
 const enter = (i: number) => FadeInDown.delay(i * 55).duration(550)
@@ -84,9 +88,14 @@ export function CueHome() {
   const voiceOn = voiceApprovalsOn()
   const solLeft = Number((Number(allowanceLeft()) / 1e9).toFixed(4)).toString()
   useAnswerQuestions(account!.address)
-  const balance = useGetBalance(account!.address)
-  const value = balance.data?.value
   const address = account!.address.toString()
+  // Everything that's the user's: plain SOL, SOL set aside for Cue in their own account, and what Cue's key holds.
+  // Reading it also brings "Cue can spend" in line with the chain. Under 'get-balance' so a send refreshes it.
+  const balance = useQuery({
+    queryFn: () => syncAllowance(client, address, cluster.id),
+    queryKey: ['get-balance', 'total', cluster.id, address],
+  })
+  const value = balance.data?.total
   // The user's Seeker name, shown beside (never instead of) the address: anyone can send a name to any wallet.
   const { data: skrName, refetch: refetchSkrName } = useQuery({
     queryFn: () => skrNamesOf(mainnetRpc, account!.address).then((names) => names[0] ?? null),
