@@ -48,14 +48,23 @@ async function feeAccountFor(client: SolanaClient, inputMint: Address, outputMin
 
 /**
  * Cue's voice allowance is wrapped SOL in the wallet's own wrapped-SOL account, approved for Cue's key. A swap in or out
- * of SOL ends by closing that account (Jupiter's unwrap), which hands the SOL back but silently ends the allowance. This
- * builds a second transaction that puts it back as it was: the same SOL wrapped again, the same amount approved again.
+ * of SOL ends by closing that account (Jupiter's unwrap), which hands the SOL back but silently ends the allowance.
+ * `allowanceBefore` notes it before the swap; `restoreAllowance` then puts it back as it was (the same SOL wrapped again,
+ * the same amount approved again) in its own transaction, signed after the swap has landed: Phantom checks each
+ * transaction against the wallet as it is, and before the swap the SOL to re-wrap isn't back yet.
  */
-async function keepAllowance(client: SolanaClient, owner: Address) {
+async function allowanceBefore(client: SolanaClient, owner: Address) {
   const key = await getSessionKey()
   if (!key) return null
   const { approved, wrapped } = await solOnChain(client, owner)
-  if (approved === 0n) return null
+  return approved === 0n ? null : { approved, delegate: key.address, wrapped }
+}
+
+async function restoreAllowance(
+  client: SolanaClient,
+  owner: Address,
+  { approved, delegate, wrapped }: NonNullable<Awaited<ReturnType<typeof allowanceBefore>>>,
+) {
   const ata = await findAtaAddress(owner, NATIVE_MINT_ADDRESS)
   const { value: blockhash } = await client.rpc.getLatestBlockhash({ commitment: 'confirmed' }).send()
   const message = pipe(
@@ -73,7 +82,7 @@ async function keepAllowance(client: SolanaClient, owner: Address) {
           }),
           getTransferSolInstruction({ amount: wrapped, destination: ata, source: owner }),
           getSyncNativeInstruction({ account: ata }),
-          getApproveInstruction({ amount: approved, delegate: key.address, owner, source: ata }),
+          getApproveInstruction({ amount: approved, delegate, owner, source: ata }),
         ],
         m,
       ),
@@ -145,8 +154,9 @@ export async function executeWalletSwap({
   const feeAccount = await feeAccountFor(client, inputMint, outputMint)
   let lastValidBlockHeight = 0n
   let outAmount = 0n
-  let restore: Awaited<ReturnType<typeof keepAllowance>> = null
-  const [signed, signedRestore] = await transact(async (wallet) => {
+  const touchesSol = inputMint === NATIVE_MINT_ADDRESS || outputMint === NATIVE_MINT_ADDRESS
+  const allowance = touchesSol ? await allowanceBefore(client, account.address) : null
+  const [signed] = await transact(async (wallet) => {
     await wallet.authorize({ chain, identity })
     const build = async (excludeDexes?: string[]) => {
       const quote = await fetchQuote({
@@ -179,16 +189,20 @@ export async function executeWalletSwap({
     const unsigned = withWholeLamportPriority(
       getTransactionDecoder().decode(getBase64Encoder().encode(swap.swapTransaction)),
     )
-    const touchesSol = inputMint === NATIVE_MINT_ADDRESS || outputMint === NATIVE_MINT_ADDRESS
-    restore = touchesSol ? await keepAllowance(client, account.address) : null
-    // One approval in Phantom for both; the second is only sent once the swap has gone through.
-    return wallet.signTransactions({ transactions: restore ? [unsigned, restore.transaction] : [unsigned] })
+    return wallet.signTransactions({ transactions: [unsigned] })
   })
   const signature = await sendAndConfirm({ client, lastValidBlockHeight, transaction: signed })
-  const kept = restore as Awaited<ReturnType<typeof keepAllowance>> // set inside the wallet session above
-  if (!kept || !signedRestore) return { outAmount, signature }
+  if (!allowance) return { outAmount, signature }
+  // A second approval in Phantom, now that the swap has handed the SOL back: keep Cue's allowance as it was.
   try {
-    await sendAndConfirm({ client, lastValidBlockHeight: kept.lastValidBlockHeight, transaction: signedRestore })
+    let lastValid = 0n
+    const [signedRestore] = await transact(async (wallet) => {
+      await wallet.authorize({ chain, identity })
+      const restore = await restoreAllowance(client, account.address, allowance)
+      lastValid = restore.lastValidBlockHeight
+      return wallet.signTransactions({ transactions: [restore.transaction] })
+    })
+    await sendAndConfirm({ client, lastValidBlockHeight: lastValid, transaction: signedRestore })
     return { outAmount, signature }
   } catch {
     return {
