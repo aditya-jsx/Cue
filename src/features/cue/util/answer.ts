@@ -3,6 +3,7 @@ import { address } from '@solana/kit'
 import type { SolanaClient } from '@/features/cluster/data-access/create-solana-client'
 import { describeTrigger, formatUsd, type PriceTrigger } from '@/features/price-triggers/data-access/trigger-store'
 import type { PricePoint, Symbol } from '@/features/prices/data-access/price-store'
+import { solOnChain } from '@/features/cue/data-access/voice-allowance'
 import { spokenPrice } from '@/features/cue/util/spoken'
 import { BUYABLE_TOKENS } from '@/features/wallet/util/tokens'
 
@@ -62,6 +63,7 @@ export async function answerQuestion({
 
   const token = symbol && symbol !== 'SOL' ? BUYABLE_TOKENS[symbol] : undefined
   let held: number
+  let setAside = 0 // SOL that is the user's but set aside for Cue (voice allowance, Cue's fee money)
   if (token) {
     // By token program, not by mint: a mint that doesn't exist on this cluster (JUP on devnet) is an RPC error,
     // where it should just mean "you hold none".
@@ -74,17 +76,21 @@ export async function answerQuestion({
       .filter((info) => info.mint === token.mint)
       .reduce((sum, info) => sum + (info.tokenAmount.uiAmount ?? 0), 0)
   } else {
-    held = Number((await client.rpc.getBalance(address(owner)).send()).value) / 1e9
+    // The same total as Home: plain SOL plus what's set aside for Cue, which is still the user's.
+    const sol = await solOnChain(client, owner)
+    held = Number(sol.total) / 1e9
+    setAside = Number(sol.total - sol.plain) / 1e9
   }
   const name = symbol ?? 'SOL'
   const usd = prices[name] ? held * prices[name]!.usd : null
   const worth = usd !== null ? ` (${formatUsd(usd)})` : ''
   const spokenWorth = usd !== null && usd > 0 ? `, about ${spokenPrice(usd)}` : ''
+  const aside = setAside >= 0.0001 ? `, including ${amount(setAside)} set aside for Cue` : ''
   return {
     spoken:
       held > 0
-        ? `You have ${amount(held)} ${SPOKEN_NAME[name]}${spokenWorth}.`
+        ? `You have ${amount(held)} ${SPOKEN_NAME[name]}${spokenWorth}${aside}.`
         : `You don't hold any ${SPOKEN_NAME[name]}.`,
-    text: `${amount(held)} ${name}${worth}`,
+    text: `${amount(held)} ${name}${worth}${aside}`,
   }
 }
